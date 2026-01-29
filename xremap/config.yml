@@ -1,0 +1,41 @@
+modmap:
+  - name: Global
+    remap:
+      CapsLock: Backspace
+
+keymap:
+  - exact_match: true
+    remap:
+      Alt-k: up
+      Alt-j: down
+      Alt-l: right
+      Alt-h: left
+
+      j:
+        remap:
+          k: Esc
+          l: C-Space
+        timeout_millis: 85
+
+      f:
+        remap:
+          j: Alt-Tab
+        timeout_millis: 85
+
+      TAB:
+        remap:
+          h: ALT-1
+          j: ALT-2
+          k: ALT-3
+          l: ALT-4
+          SEMICOLON: ALT-5
+        timeout_millis: 85
+
+  # - name: Ed-like
+  #   application:
+  #     not: [alacritty, nvim]
+  #   remap:
+  #     C-a: home
+  #     C-e: end
+  #     # C-u: [Shift-home, backspace]
+  #     # C-k: [Shift-end, backspace]
