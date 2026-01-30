@@ -142,3 +142,10 @@ export BROWSER=/usr/bin/google-chrome-stable
 
 # use nvim as man pager
 export MANPAGER='nvim +Man!'
+
+# bun completions
+[ -s "/home/cipherlogs/.bun/_bun" ] && source "/home/cipherlogs/.bun/_bun"
+
+# bun
+export BUN_INSTALL="$HOME/.bun"
+export PATH="$BUN_INSTALL/bin:$PATH"
