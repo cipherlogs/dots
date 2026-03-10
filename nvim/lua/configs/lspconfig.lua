@@ -83,9 +83,9 @@ local servers = {
       })
     end,
   },
-  hls = {
-    filetypes = { "haskell", "lhaskell", "cabal" },
-  },
+  -- hls = {
+  --   filetypes = { "haskell", "lhaskell", "cabal" },
+  -- },
   eslint = {},
 }
 
