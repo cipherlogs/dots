@@ -1,12 +1,6 @@
-2026/03/04-14:08:07.662 142876 Reusing MANIFEST /home/cipherlogs/.config/Gologin/Local Storage/leveldb/MANIFEST-000001
-2026/03/04-14:08:07.721 142876 Recovering log #3
-2026/03/04-14:08:07.721 142876 Reusing old log /home/cipherlogs/.config/Gologin/Local Storage/leveldb/000003.log 
-2026/03/04-14:40:09.151 1428a1 Level-0 table #5: started
-2026/03/04-14:40:09.153 1428a1 Level-0 table #5: 18825 bytes OK
-2026/03/04-14:40:09.155 1428a1 Delete type=0 #3
-2026/03/04-15:20:09.152 1428a1 Level-0 table #7: started
-2026/03/04-15:20:09.154 1428a1 Level-0 table #7: 17495 bytes OK
-2026/03/04-15:20:09.156 1428a1 Delete type=0 #4
-2026/03/04-15:58:09.139 1428a1 Level-0 table #9: started
-2026/03/04-15:58:09.151 1428a1 Level-0 table #9: 18295 bytes OK
-2026/03/04-15:58:09.153 1428a1 Delete type=0 #6
+2026/03/10-18:29:25.239 3670c4 Reusing MANIFEST /home/cipherlogs/.config/Gologin/Local Storage/leveldb/MANIFEST-000001
+2026/03/10-18:29:25.304 3670c4 Recovering log #110
+2026/03/10-18:29:25.305 3670c4 Reusing old log /home/cipherlogs/.config/Gologin/Local Storage/leveldb/000110.log 
+2026/03/10-18:56:26.874 3670f0 Level-0 table #114: started
+2026/03/10-18:56:26.884 3670f0 Level-0 table #114: 19150 bytes OK
+2026/03/10-18:56:26.888 3670f0 Delete type=0 #110

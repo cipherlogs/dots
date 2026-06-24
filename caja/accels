@@ -2,7 +2,6 @@
 ; this file is an automated accelerator map dump
 ;
 ; (gtk_accel_path "<Actions>/DirViewActions/New Empty File" "")
-; (gtk_accel_path "<Actions>/ListViewActions/Visible Columns" "")
 ; (gtk_accel_path "<Actions>/NavigationActions/Show Hide Extra Pane" "F3")
 ; (gtk_accel_path "<Actions>/ShellActions/File" "")
 ; (gtk_accel_path "<Actions>/DirViewActions/Self Format Volume" "")
