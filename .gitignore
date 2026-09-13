@@ -1,0 +1,56 @@
+# dots/.gitignore — deny state by default; packages are added explicitly.
+# (Mirrors ~/.config/.gitignore conventions from the pre-stow repo.)
+
+# Secrets (templates only, never real files)
+**/secrets.env
+!**/secrets.env.template
+environment.d/*.conf
+!environment.d/*.template
+gh/hosts.yml
+**/.env
+**/credentials.json
+**/.credentials.json
+*.pem
+*.key
+
+# Caches / runtime state
+node_modules/
+.wrangler/
+*/Cache/
+*/Code\ Cache/
+*/GPUCache/
+*/Crash\ Reports/
+*/Crashpad/
+*/blob_storage/
+SingletonLock
+SingletonSocket
+SingletonCookie
+*.log
+*.csv.gz
+htop_history
+turborepo/
+ai/backups/
+claude-spark/backup/
+obs-studio/profiler_data/
+obs-studio/plugin_manager/
+
+# Full app-state dirs (never portable)
+Claude/
+Antigravity/
+Antigravity\ Manager/
+BraveSoftware/
+google-chrome*/
+chromium/
+gemini-desktop/
+Code\ -\ OSS/
+Postman/
+GoLogin/
+Gologin/
+Daedalus\ Mainnet/
+cef_user_data/
+
+# OS / editor noise
+*~
+.DS_Store
+*.swp
+*.swo
