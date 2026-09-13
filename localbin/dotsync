@@ -1,0 +1,158 @@
+#!/usr/bin/env bash
+# dotsync — manual + automatic sync for the ~/dots repo.
+#
+#   dotsync           interactive: status, stage tracked changes, commit, push
+#   dotsync status    show short status
+#   dotsync pull      pull --rebase (conflicts stop here for YOU to resolve)
+#   dotsync push      push current branch
+#   dotsync log       recent history
+#   dotsync --auto    non-interactive (systemd timer): commit+push iff
+#                     fast-forwardable; otherwise notify and do nothing.
+#
+# Safety rules (both modes):
+#   - never `git add .` — only tracked modifications (`git add -u`);
+#     untracked files are listed, never vacuumed in.
+#   - staged diff is scanned for secret patterns; on a hit, abort.
+#   - refuses to run while a rebase/merge is in progress.
+#   - a flock lock serializes manual vs timer runs.
+#   - --auto never pulls and never resolves conflicts; it reports via dunst.
+#
+# Env overrides (tests): DOTS_DIR (repo path), DOTSYNC_NO_NOTIFY=1.
+
+set -u
+DOTS="${DOTS_DIR:-$HOME/dots}"
+LOCK="$DOTS/.dotsync.lock"
+HOST="$(hostnamectl hostname 2>/dev/null || hostname)"
+AUTO=0
+
+notify() {
+  [ "${DOTSYNC_NO_NOTIFY:-0}" = "1" ] && return 0
+  command -v notify-send >/dev/null 2>&1 || return 0
+  notify-send "dotsync" "$1" || true
+}
+
+die() { echo "dotsync: $*" >&2; exit 1; }
+
+[ -d "$DOTS/.git" ] || die "$DOTS is not a git repo"
+
+# Shared lock with the timer so manual and auto runs never interleave.
+exec 9>"$LOCK"
+flock -n 9 || die "another dotsync run holds the lock ($LOCK)"
+
+in_progress() {
+  [ -d "$DOTS/.git/rebase-merge" ] || [ -d "$DOTS/.git/rebase-apply" ] \
+    || [ -f "$DOTS/.git/MERGE_HEAD" ]
+}
+
+# Scan ADDED lines of the staged diff for things that look like secrets.
+# Placeholders (YOUR_*, EXAMPLE, ...) are excluded to keep templates committable.
+secret_scan() {
+  git -C "$DOTS" diff --cached -U0 --no-color \
+    | grep -E "^\+" | grep -vE "^\+\+\+" \
+    | grep -v -i -E "YOUR_|EXAMPLE|PLACEHOLDER|CHANGEME|xxx+" \
+    | grep -E -e "ghp_[A-Za-z0-9]{20,}" \
+               -e "github_pat_[A-Za-z0-9_]{10,}" \
+               -e "BEGIN [A-Z ]*PRIVATE KEY" \
+               -e "oauth_token|refresh_token" \
+               -e "AKIA[0-9A-Z]{16}" \
+               -e "xox[bap]-[A-Za-z0-9-]+" \
+               -e "(api[_-]?key|secret|passwd|password)[\"']?\s*[:=]\s*[\"']?[A-Za-z0-9_./+=~-]{20,}" \
+    && return 0 || return 1
+}
+
+do_status() { git -C "$DOTS" status --short; }
+
+do_pull() {
+  in_progress && die "rebase/merge in progress — resolve it first, then re-run"
+  git -C "$DOTS" pull --rebase || die "pull failed — resolve conflicts, then: git rebase --continue"
+}
+
+do_push() {
+  git -C "$DOTS" remote get-url origin >/dev/null 2>&1 \
+    || die "no 'origin' remote — add one: git -C $DOTS remote add origin <url>"
+  git -C "$DOTS" push || die "push failed (non-fast-forward? run: dotsync pull)"
+}
+
+do_commit_flow() {
+  local msg="$1"  # empty => prompt (manual); non-empty => use as-is (auto)
+
+  in_progress && { echo "dotsync: rebase/merge in progress — resolve it first" >&2; return 1; }
+
+  if [ -z "$(git -C "$DOTS" status --porcelain)" ]; then
+    [ "$AUTO" = "1" ] || echo "dotsync: clean, nothing to do."
+    return 0
+  fi
+
+  git -C "$DOTS" add -u
+
+  if [ -z "$(git -C "$DOTS" diff --cached --name-only)" ]; then
+    # Only untracked files present — committable set is empty.
+    [ "$AUTO" = "1" ] || echo "dotsync: clean (untracked files left alone)."
+    return 0
+  fi
+
+  if secret_scan >/dev/null; then
+    echo "dotsync: ABORT — staged diff looks like it contains a secret." >&2
+    echo "dotsync: inspect with: git -C $DOTS diff --cached" >&2
+    git -C "$DOTS" reset -q
+    return 1
+  fi
+
+  local untracked
+  untracked="$(git -C "$DOTS" status --porcelain | grep "^??" || true)"
+  if [ -n "$untracked" ]; then
+    echo "dotsync: untracked files (NOT staged — add explicitly if wanted):"
+    echo "$untracked"
+  fi
+
+  if [ -z "$msg" ]; then
+    local areas
+    areas="$(git -C "$DOTS" diff --cached --name-only | cut -d/ -f1-2 | sort -u | tr '\n' ' ')"
+    printf 'dotsync: message [%s] ' "sync ($HOST) $areas"
+    IFS= read -r msg || return 1
+    [ -z "$msg" ] && msg="sync ($HOST) $areas"
+  fi
+
+  git -C "$DOTS" commit -q -m "$msg" || return 1
+  echo "dotsync: committed: $msg"
+  return 0
+}
+
+usage() {
+  sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
+}
+
+cmd="${1:-default}"
+case "$cmd" in
+  status) do_status ;;
+  log) git -C "$DOTS" log --oneline -15 ;;
+  pull) do_pull ;;
+  push) do_push ;;
+  --auto)
+    AUTO=1
+    if ! do_commit_flow "auto: $HOST $(date +%F\T%H:%M)"; then
+      notify "auto-sync needs you — see journal: journalctl --user -u dotsync-auto"
+      exit 1
+    fi
+    # Push only on clean fast-forward; anything else is tomorrow-you's job.
+    if [ -n "$(git -C "$DOTS" status -sb | head -n 1 | grep -E "ahead")" ]; then
+      if ! git -C "$DOTS" remote get-url origin >/dev/null 2>&1; then
+        exit 0  # no remote yet (pre-migration) — stay silent, nothing to sync to
+      fi
+      git -C "$DOTS" push -q 2>/dev/null \
+        || notify "dots auto-sync: push needed help (run: dotsync pull)"
+    fi
+    ;;
+  -h|--help|help) usage ;;
+  default|"")
+    do_status
+    do_commit_flow "" || exit 1
+    printf 'dotsync: push now? [Y/n] '
+    IFS= read -r ans || exit 1
+    case "$ans" in
+      n|N|no|NO) echo "dotsync: committed locally, not pushed." ;;
+      *) do_push ;;
+    esac
+    ;;
+  *) echo "dotsync: unknown command '$cmd'" >&2; usage >&2; exit 1 ;;
+esac

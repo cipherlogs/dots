@@ -12,6 +12,14 @@ need git "sudo pacman -S git"
 
 mkdir -p "$HOME/.config" "$HOME/.local/bin"
 
+# Transition leftovers: during the ~/.config-repo era the dotsync timer
+# units were symlinked here by hand. Stow refuses to overwrite existing
+# files, so remove those manual links once (stow recreates them properly).
+for u in dotsync-auto.service dotsync-auto.timer; do
+  p="$HOME/.config/systemd/user/$u"
+  [ -L "$p" ] && rm "$p" && echo "removed manual link: $p"
+done
+
 stow -d "$DOTS/home" -t "$HOME" .
 stow -d "$DOTS/config" -t "$HOME/.config" .
 stow -d "$DOTS/localbin" -t "$HOME/.local/bin" .

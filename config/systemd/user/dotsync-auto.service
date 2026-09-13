@@ -1,0 +1,15 @@
+[Unit]
+Description=dotsync auto-sync (~/dots commit+push when fast-forwardable)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Repo-absolute path on purpose: works before AND after `install.sh` stows
+# localbin/ into ~/.local/bin.
+ExecStart=%h/dots/localbin/dotsync --auto
+LockPersonality=true
+NoNewPrivileges=true
+
+[Install]
+WantedBy=default.target
