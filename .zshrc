@@ -3,6 +3,9 @@ export PNPM_HOME="/home/cipherlogs/.local/share/pnpm"
 export PATH=$PNPM_HOME:$HOME/bin:/usr/local/bin:$PATH
 export PATH="$PATH:/opt/abdownloadmanager/bin"
 
+# Local-only secrets (never committed — copy zsh/secrets.env.template to zsh/secrets.env)
+[ -f "$HOME/.config/zsh/secrets.env" ] && source "$HOME/.config/zsh/secrets.env"
+
 # Path to your oh-my-zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
 
@@ -156,3 +159,10 @@ case ":$PATH:" in
   *":$PNPM_HOME:"*) ;;
   *) export PATH="$PNPM_HOME:$PATH" ;;
 esac
+
+# Leadcalls MCP env — Claude Code .mcp.json needs NEON_API_KEY/TELNYX_API_KEY in env
+claude-leadcalls() { set -a; source /home/cipherlogs/Repos/AI/leadcalls/.env; set +a; claude "$@"; }
+
+# claude-spark toggle (direct Meta Muse Spark vs subscription) — static loader only.
+# The `spark` command flips ~/.config/claude-spark/mode; this block applies it per shell.
+[ -f "$HOME/.config/zsh/claude-spark-toggle.zsh" ] && source "$HOME/.config/zsh/claude-spark-toggle.zsh"

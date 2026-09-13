@@ -1,15 +1,4 @@
-alias xclip="xclip -selection clipboard"
-alias vim="nvim"
-alias vimdiff="nvim -d"
-alias lock="i3exit lock"
-alias hibernate="i3exit hibernate"
-alias suspend="i3exit suspend"
-alias logout="i3exit logout"
-alias todo="nvim ~/Drafts/todos.md"
-alias maintodo="nvim ~/Drafts/main.md"
-alias gi="ghci -e"
-alias tree="tree -a --dirsfirst"
-alias ll="ls -lAhv --group-directories-first"
-alias shad="pnpm dlx shadcn@latest"
-
-bat() {cat /sys/class/power_supply/BAT1/capacity}
+# ~/.zshenv — sourced for ALL zsh invocations (including scripts).
+# Keep this minimal: environment only, no aliases/output (see .aliases).
+export EDITOR="nvim"
+export VISUAL="nvim"
