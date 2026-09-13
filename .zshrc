@@ -1,6 +1,10 @@
 # If you come from bash you might have to change your $PATH.
 export PNPM_HOME="/home/cipherlogs/.local/share/pnpm"
 export PATH=$PNPM_HOME:$HOME/bin:/usr/local/bin:$PATH
+case ":$PATH:" in
+  *":$HOME/.local/bin:"*) ;;
+  *) export PATH="$HOME/.local/bin:$PATH" ;;
+esac
 export PATH="$PATH:/opt/abdownloadmanager/bin"
 
 # Local-only secrets (never committed — copy zsh/secrets.env.template to zsh/secrets.env)
@@ -118,12 +122,9 @@ upp() {
   git commit -m "Updated!" &&
   git push
 
-  # save dots
-  cd ~/.config &&
-  echo "\n==> Inside dots ...\n" &&
-  git add . &&
-  git commit -m "Updated!" &&
-  git push
+  # save dots (stow repo; dotsync stages tracked changes only, never `add .`)
+  # Repo path works pre- and post-stow; PATH entry above covers post-stow.
+  ~/dots/localbin/dotsync || echo "dotsync failed — run it manually when ready"
 
   # go back to where you were
   cd $current_path
