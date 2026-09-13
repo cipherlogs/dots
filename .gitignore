@@ -74,3 +74,21 @@ mcp-needs-auth-cache.json
 *.swp
 *.swo
 .zwc
+
+# Pruned from tracking (kept on disk, local-only — see prune commit)
+caja/
+pcmanfm/
+libfm/
+Mousepad/
+viewnior/
+manjaro/
+manjaro-hello.json
+pamac/
+morc_menu/
+gconf/
+K/
+Kvantum/
+hexchat/
+falkon/
+snaplet/
+configstore/
