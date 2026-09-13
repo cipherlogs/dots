@@ -1,4 +1,76 @@
+# === Lean dots: only hand-edited configs belong here ===
+# Browsers / Electron app state (caches, cookies, GPU, crash reports — never portable)
 Antigravity/
+Antigravity\ Manager/
 BraveSoftware/
 google-chrome/
+google-chrome-for-testing/
+google-chrome-headless/
+chromium/
+gemini-desktop/
+Claude/
 Code\ -\ OSS/
+Postman/
+GoLogin/
+Gologin/
+Daedalus\ Mainnet/
+cef_user_data/
+Unknown\ Organization/
+
+# Caches / runtime state that leaks into .config
+*/Cache/
+*/Code\ Cache/
+*/GPUCache/
+*/DawnGraphiteCache/
+*/DawnWebGPUCache/
+*/Crash\ Reports/
+*/Crashpad/
+*/blob_storage/
+*/Service\ Worker/
+SingletonLock
+SingletonSocket
+SingletonCookie
+*.log
+orpc_packets.log
+Network\ Persistent\ State*
+
+# JS / tooling build outputs
+node_modules/
+.wrangler/
+turborepo/.turbo/
+*.tsbuildinfo
+.next/
+out/
+dist/
+
+# App profiler / history / state (keep scenes, drop telemetry)
+obs-studio/profiler_data/
+obs-studio/plugin_manager/
+obs-studio/*.bak
+htop/htop_history
+*.csv.gz
+turborepo/
+ai/backups/
+claude-spark/backup/
+
+# Secrets — never commit tokens (use *.template + local untracked file)
+gh/hosts.yml
+environment.d/*.conf
+!environment.d/*.template
+zsh/secrets.env
+**/.env
+**/credentials.json
+**/.credentials.json
+mcp-needs-auth-cache.json
+*.pem
+*.key
+*_token
+**/security.db
+**/user_tokens.db
+
+# Editor / OS noise
+*~
+.DS_Store
+*.swp
+*.swo
+.zwc

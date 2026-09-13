@@ -1,0 +1,18 @@
+[Unit]
+Description=LiteLLM gateway for claude-spark (Meta Muse Spark)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=%h/litellm-claude-gateway/run.sh
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+# uvicorn waits indefinitely for open keep-alive connections on SIGTERM, so an
+# uncapped stop hangs until the default 90s timeout and marks the unit failed.
+# Cap it: stop is fast, and spark_off clears the timeout marker via reset-failed.
+TimeoutStopSec=10
+
+[Install]
+WantedBy=default.target

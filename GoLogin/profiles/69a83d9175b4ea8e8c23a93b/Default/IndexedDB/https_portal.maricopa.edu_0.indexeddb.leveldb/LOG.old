@@ -1,6 +1,0 @@
-2026/03/04-18:57:43.889 169611 Creating DB /home/cipherlogs/.config/GoLogin/profiles/69a83d9175b4ea8e8c23a93b/Default/IndexedDB/https_portal.maricopa.edu_0.indexeddb.leveldb since it was missing.
-2026/03/04-18:57:43.891 169611 Reusing MANIFEST /home/cipherlogs/.config/GoLogin/profiles/69a83d9175b4ea8e8c23a93b/Default/IndexedDB/https_portal.maricopa.edu_0.indexeddb.leveldb/MANIFEST-000001
-2026/03/04-18:58:02.007 16ddea Level-0 table #5: started
-2026/03/04-18:58:02.008 16ddea Level-0 table #5: 1279 bytes OK
-2026/03/04-18:58:02.009 16ddea Delete type=0 #3
-2026/03/04-18:58:02.009 16ddea Manual compaction at level-0 from (begin) .. (end); will stop at (end)
