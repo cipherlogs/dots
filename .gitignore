@@ -49,6 +49,9 @@ Gologin/
 Daedalus\ Mainnet/
 cef_user_data/
 
+# dotsync runtime lock (never committed)
+.dotsync.lock
+
 # OS / editor noise
 *~
 .DS_Store

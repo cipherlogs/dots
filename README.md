@@ -25,6 +25,26 @@ gh auth login   # regenerates config/gh/hosts.yml (never committed)
 
 Requires `stow` (`sudo pacman -S stow` on Manjaro).
 
+## Sync
+
+Live paths are symlinks into this repo, so editing a config edits the
+repo — sync is just commit + push. Two ways, both safe to mix:
+
+- **Manual:** `dotsync` — shows status, stages tracked changes only
+  (untracked files are listed, never auto-added), scans the staged
+  diff for secrets, prompts for a message, asks before pushing.
+  Subcommands: `dotsync status|pull|push|log`. The old `upp()` now
+  calls `dotsync` for its dots half.
+- **Auto:** `dotsync-auto.timer` (every 30 min) runs `dotsync --auto`:
+  commits tracked changes as `auto: <host> <timestamp>` and pushes
+  only on clean fast-forward. No auto-pull, no conflict resolution —
+  on anything unexpected it sends a dunst notification and leaves the
+  repo for your next manual `dotsync`.
+
+Multi-machine rule: push before leaving a machine, `dotsync pull`
+(`--rebase`) on arrival. Host-specific files live in `hosts/` so
+machines don't fight.
+
 ## Rules
 
 - `git add` is explicit per file — never `git add .` (state dirs sit next to configs).
