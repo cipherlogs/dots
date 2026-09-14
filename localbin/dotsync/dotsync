@@ -6,6 +6,10 @@
 #   dotsync pull      pull --rebase (conflicts stop here for YOU to resolve)
 #   dotsync push      push current branch
 #   dotsync log       recent history
+#   dotsync track [--host] <path>
+#                     move a home file/dir into the repo as a stow package,
+#                     link it back, stage it, and continue to commit flow.
+#                     Refuses state/secret-looking paths. Interactive only.
 #   dotsync --auto    non-interactive (systemd timer): commit+push iff
 #                     fast-forwardable; otherwise notify and do nothing.
 #
@@ -73,6 +77,111 @@ do_push() {
   git -C "$DOTS" push || die "push failed (non-fast-forward? run: dotsync pull)"
 }
 
+rollback_track() { # $1=dest $2=src $3=pkg $4=destbase $5=targetbase
+  stow -D -d "$4" -t "$5" "$3" 2>/dev/null || true
+  if [ -e "$1" ] && [ ! -e "$2" ]; then
+    mkdir -p "$(dirname "$2")"
+    mv "$1" "$2" 2>/dev/null || true
+  fi
+}
+
+# Move a live home path into the repo as a stow package and link it back.
+# Usage: dotsync track [--host] <path>
+do_track() {
+  local use_host=0 src=""
+  for a in "$@"; do
+    case "$a" in
+      --host) use_host=1 ;;
+      *) [ -z "$src" ] && src="$a" || die "usage: dotsync track [--host] <path>" ;;
+    esac
+  done
+  [ -n "$src" ] || die "usage: dotsync track [--host] <path>"
+  [ "$AUTO" = "1" ] && die "track is interactive-only"
+
+  [ -e "$src" ] || die "no such file: $src"
+  [ -L "$src" ] && die "$src is already a symlink — nothing to track"
+  case "$src" in /*) ;; *) src="$PWD/$src" ;; esac
+  case "$src" in "$HOME"/*) ;; *) die "$src is outside \$HOME — track only manages home files" ;; esac
+  case "$src" in "$DOTS"/*) die "$src is already inside the repo" ;; esac
+
+  # Refuse state / secret-looking paths outright — the given path and,
+  # for directories, anything inside its tree.
+  if printf '%s' "$src" | grep -q -E "node_modules|/Cache/|/cache/|/logs/|Crash Reports|blob_storage|GPUCache|\.log$|hosts\.yml|credentials.*\.json$|secrets\.env$|\.pem$|\.key$"; then
+    die "refusing to track state/secret path: $src"
+  fi
+  if [ -d "$src" ] && find "$src" | grep -q -E "node_modules|/Cache/|/cache/|/logs/|Crash Reports|blob_storage|GPUCache|\.log$"; then
+    die "refusing: $src contains state/cache files — move only the config"
+  fi
+  # Refuse secret-looking contents (template them first instead).
+  if grep -r -q -E "ghp_[A-Za-z0-9]{20,}|BEGIN [A-Z ]*PRIVATE KEY|oauth_token|refresh_token" "$src" 2>/dev/null; then
+    die "refusing: $src looks like it contains a secret — move secrets to a .template first"
+  fi
+
+  # Infer stow root + package from location. Package contents must mirror
+  # the target 1:1 (config/nvim/nvim/init.lua -> ~/.config/nvim/init.lua).
+  local cfg="$HOME/.config" bin="$HOME/.local/bin" rel root first
+  case "$src" in
+    "$cfg"/*)  root="config";   rel="${src#$cfg/}" ;;
+    "$bin"/*)  root="localbin"; rel="${src#$bin/}" ;;
+    "$HOME"/.*) root="home";    rel="${src#$HOME/}" ;;
+    *) die "don't know where $src belongs (only ~/.config/*, ~/.local/bin/*, ~/.*)" ;;
+  esac
+  [ -n "$rel" ] && [ "$rel" != "$src" ] || die "cannot infer package for $src"
+  first="${rel%%/*}"
+  if [ "$rel" = "$first" ]; then
+    # File directly under the target root: package from filename.
+    first="$(printf '%s' "$rel" | sed -e 's/^\.//' -e 's/\..*//')"
+    [ -n "$first" ] || die "cannot infer package for $src"
+  fi
+
+  local destbase targetbase
+  if [ "$use_host" = "1" ]; then
+    destbase="$DOTS/hosts/$HOST/$root"
+  else
+    destbase="$DOTS/$root"
+  fi
+  case "$root" in
+    config)   targetbase="$HOME/.config" ;;
+    home)     targetbase="$HOME" ;;
+    localbin) targetbase="$HOME/.local/bin" ;;
+  esac
+
+  local dest="$destbase/$first/$rel"
+  [ -e "$dest" ] && die "destination already exists: $dest"
+  local src_is_file=0
+  [ -f "$src" ] && src_is_file=1
+  mkdir -p "$(dirname "$dest")"
+  mv "$src" "$dest" || die "move failed"
+  # Drop the husk dir, but only when a *file* moved out of it. (When a
+  # directory moves, it is gone already — rmdiring its parent here once
+  # deleted an entire ~/.config in testing. Never again.)
+  if [ "$src_is_file" = "1" ]; then
+    rmdir "$(dirname "$src")" 2>/dev/null || true
+  fi
+  # The husk removal above can take the stow target itself when tracking
+  # a top-level file (e.g. ~/.local/bin/tool) — recreate before stowing.
+  mkdir -p "$targetbase"
+
+  if ! stow -d "$destbase" -t "$targetbase" "$first"; then
+    echo "dotsync: stow failed — rolling back" >&2
+    rollback_track "$dest" "$src" "$first" "$destbase" "$targetbase"
+    return 1
+  fi
+  if [ ! -e "$src" ]; then
+    echo "dotsync: stow left $src missing — rolling back" >&2
+    rollback_track "$dest" "$src" "$first" "$destbase" "$targetbase"
+    return 1
+  fi
+
+  echo "dotsync: tracked: $src -> $dest"
+  if ! git -C "$DOTS" add "${dest#$DOTS/}"; then
+    echo "dotsync: git add failed — rolling back" >&2
+    rollback_track "$dest" "$src" "$first" "$destbase" "$targetbase"
+    return 1
+  fi
+  return 0
+}
+
 do_commit_flow() {
   local msg="$1"  # empty => prompt (manual); non-empty => use as-is (auto)
 
@@ -128,6 +237,17 @@ case "$cmd" in
   log) git -C "$DOTS" log --oneline -15 ;;
   pull) do_pull ;;
   push) do_push ;;
+  track)
+    shift
+    do_track "$@" || exit 1
+    do_commit_flow "" || exit 1
+    printf 'dotsync: push now? [Y/n] '
+    IFS= read -r ans || exit 1
+    case "$ans" in
+      n|N|no|NO) echo "dotsync: tracked locally, not pushed." ;;
+      *) do_push ;;
+    esac
+    ;;
   --auto)
     AUTO=1
     if ! do_commit_flow "auto: $HOST $(date +%F\T%H:%M)"; then

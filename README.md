@@ -18,8 +18,8 @@ dots/
 git clone git@github.com:cipherlogs/dots.git ~/dots
 cd ~/dots
 ./install.sh
-cp home/zsh/secrets.env.template ~/.config/zsh/secrets.env  # fill in
-cp config/environment.d/github_pat.conf.template ~/.config/environment.d/github_pat.conf
+cp config/zsh/zsh/secrets.env.template ~/.config/zsh/secrets.env  # fill in
+cp config/environment.d/environment.d/github_pat.conf.template ~/.config/environment.d/github_pat.conf
 gh auth login   # regenerates config/gh/hosts.yml (never committed)
 ```
 
@@ -44,6 +44,21 @@ repo — sync is just commit + push. Two ways, both safe to mix:
 Multi-machine rule: push before leaving a machine, `dotsync pull`
 (`--rebase`) on arrival. Host-specific files live in `hosts/` so
 machines don't fight.
+
+## Tracking a new app
+
+```bash
+dotsync track ~/.config/coolApp     # config dir  -> config/coolApp/
+dotsync track ~/.coolapprc          # home dotfile -> home/<name>/
+dotsync track ~/.local/bin/cooltool # script       -> localbin/<name>/
+dotsync track --host <path>         # machine-specific -> hosts/<host>/
+```
+
+`track` moves the path into the repo, stows it back, verifies the link,
+stages it, and continues into the commit flow. It refuses symlinks,
+paths outside `$HOME`, state dirs (`node_modules`, caches, logs), and
+secret-looking paths or contents — and rolls the move back if stowing
+fails. `--auto` never tracks.
 
 ## Rules
 
