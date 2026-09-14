@@ -10,6 +10,5 @@ alias maintodo="nvim ~/Drafts/main.md"
 alias gi="ghci -e"
 alias tree="tree -a --dirsfirst"
 alias ll="ls -lAhv --group-directories-first"
-alias shad="pnpm dlx shadcn@latest"
 
 bat() {cat /sys/class/power_supply/BAT1/capacity}
