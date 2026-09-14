@@ -1,0 +1,4 @@
+import Data.Char
+import Data.List
+
+stripRev = map (foldl (\b a -> if a /= ' ' then a:b else b) [])

@@ -1,0 +1,147 @@
+#!/usr/bin/env bash
+# muse-image.sh — Meta Muse image generation for the impeccable workflow.
+#
+# The installed impeccable launcher has no `generate-image` verb, so this
+# script fills that gap: it maps the skill's comp/plate contract
+# (prompt + optional reference image -> raster + provenance) onto Meta's
+# OpenAI-compatible endpoints.
+#
+#   generate : text-to-image          POST /v1/images/generations
+#   edit     : reference-anchored     POST /v1/images/edits
+#              (this is the `--ref` equivalent: pass a screenshot crop or
+#               a decision comp so the render anchors on real identity)
+#
+# Every output gets two provenance records, matching what the skill expects:
+#   1. <out>.json sidecar  — prompt, params, ref path, usage, created
+#   2. PNG tEXt chunk      — the exact prompt embedded in the file itself
+#      (`impeccable embed-prompt` equivalent; read back with `meta`).
+#
+# Auth: Bearer $MODEL_API_KEY (already in global env).
+# Env overrides: MUSE_IMAGE_BASE_URL, MUSE_IMAGE_MODEL.
+# Cost: $0.01 per generated image.
+#
+# Known Muse limits (from https://dev.meta.ai/docs/image-generation):
+#   - `size` ("1024x1024" etc.) sets the ASPECT RATIO, not exact pixels.
+#     Expect back a larger render at the same ratio (e.g. 1600x1600).
+#   - `background` is always "opaque" — Muse cannot do transparent PNG
+#     cutouts. For isolated objects, generate on the page's own ground
+#     color (or pick another model for that plate).
+#   - No `quality` parameter; output_format png|webp|jpeg (default webp).
+#
+# Examples:
+#   .impeccable/muse-image.sh generate --prompt-file comp-prompt.txt \
+#       --out .impeccable/mocks/comp-a.png --size 1536x1024 --format png
+#   .impeccable/muse-image.sh edit --ref .impeccable/mocks/crop-hero.png \
+#       --prompt "same layout, evening palette, no text changes" \
+#       --out .impeccable/mocks/plate-hero.png --size 1536x1024
+set -euo pipefail
+
+BASE_URL="${MUSE_IMAGE_BASE_URL:-https://api.meta.ai/v1}"
+MODEL="${MUSE_IMAGE_MODEL:-muse-image-1.0}"
+: "${MODEL_API_KEY:?MODEL_API_KEY is not exported}"
+
+usage() {
+  sed -n '2,30p' "$0"
+  echo "Usage:"
+  echo "  $0 generate --prompt TEXT|--prompt-file F --out O [--size WxH] [--format png|webp|jpeg]"
+  echo "  $0 edit --ref R --prompt TEXT|--prompt-file F --out O [--size WxH] [--format png|webp|jpeg]"
+  echo "  $0 meta --in I   (print embedded prompt + sidecar path)"
+}
+
+if [ $# -lt 1 ]; then usage; exit 2; fi
+CMD="$1"; shift
+
+# ---- meta: read back provenance -------------------------------------------
+if [ "$CMD" = "meta" ]; then
+  IN=""
+  while [ $# -gt 0 ]; do case "$1" in --in) IN="$2"; shift 2;; *) shift;; esac; done
+  [ -n "$IN" ] || { echo "--in required" >&2; exit 2; }
+  python3 - "$IN" <<'EOF'
+import json, sys
+from PIL import Image
+p = sys.argv[1]
+img = Image.open(p)
+print("size:", img.size, "format:", img.format)
+print("embedded prompt:", (img.info.get("muse:prompt") or img.text.get("muse:prompt") if hasattr(img, "text") else img.info.get("muse:prompt")) or img.info.get("prompt", "(none)"))
+print("embedded params:", img.info.get("muse:params", "(none)"))
+EOF
+  SC="${IN}.json"
+  [ -f "$SC" ] && { echo "--- sidecar $SC:"; cat "$SC"; }
+  exit 0
+fi
+
+# ---- generate / edit -------------------------------------------------------
+PROMPT=""; PROMPT_FILE=""; OUT=""; SIZE="1536x1024"; FORMAT="png"; REF=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --prompt) PROMPT="$2"; shift 2;;
+    --prompt-file) PROMPT_FILE="$2"; shift 2;;
+    --out) OUT="$2"; shift 2;;
+    --size) SIZE="$2"; shift 2;;
+    --format) FORMAT="$2"; shift 2;;
+    --ref) REF="$2"; shift 2;;
+    -h|--help) usage; exit 0;;
+    *) echo "unknown flag: $1" >&2; usage; exit 2;;
+  esac
+done
+[ -n "$PROMPT_FILE" ] && PROMPT="$(cat "$PROMPT_FILE")"
+[ -n "$PROMPT" ] || { echo "--prompt or --prompt-file required" >&2; exit 2; }
+[ -n "$OUT" ] || { echo "--out required" >&2; exit 2; }
+if [ "$CMD" = "edit" ] && [ -z "$REF" ]; then echo "--ref required for edit" >&2; exit 2; fi
+
+mkdir -p "$(dirname "$OUT")"
+
+export MUSE_PROMPT="$PROMPT" MUSE_OUT="$OUT" MUSE_SIZE="$SIZE" MUSE_FORMAT="$FORMAT" \
+       MUSE_MODEL="$MODEL" MUSE_BASE="$BASE_URL" MUSE_REF="$REF" MUSE_CMD="$CMD"
+python3 - <<'EOF'
+import base64, io, json, os, urllib.request
+
+prompt = os.environ["MUSE_PROMPT"]
+out = os.environ["MUSE_OUT"]
+size = os.environ["MUSE_SIZE"]
+fmt = os.environ["MUSE_FORMAT"]
+model = os.environ["MUSE_MODEL"]
+base = os.environ["MUSE_BASE"]
+cmd = os.environ["MUSE_CMD"]
+ref = os.environ["MUSE_REF"]
+key = os.environ["MODEL_API_KEY"]
+
+body = {"model": model, "prompt": prompt, "n": 1, "size": size,
+        "response_format": "b64_json", "output_format": fmt}
+if cmd == "edit":
+    with open(ref, "rb") as f:
+        raw = f.read()
+    import mimetypes
+    mt = mimetypes.guess_type(ref)[0] or "image/png"
+    body["images"] = [{"image_url": "data:%s;base64,%s" % (mt, base64.b64encode(raw).decode())}]
+
+path = "/images/edits" if cmd == "edit" else "/images/generations"
+req = urllib.request.Request(base + path, data=json.dumps(body).encode(),
+    headers={"Authorization": "Bearer " + key, "Content-Type": "application/json"})
+r = urllib.request.urlopen(req, timeout=300)
+resp = json.loads(r.read())
+b64 = resp["data"][0]["b64_json"]
+
+from PIL import Image
+from PIL.PngImagePlugin import PngInfo
+img = Image.open(io.BytesIO(base64.b64decode(b64)))
+if img.format != "PNG" and out.lower().endswith(".png"):
+    pass  # Pillow re-encodes on save; bytes below are canonical PNG
+buf = io.BytesIO()
+meta = PngInfo()
+meta.add_text("muse:prompt", prompt)
+meta.add_text("muse:params", json.dumps({"model": model, "size": size,
+    "output_format": fmt, "ref": ref or None}))
+img.save(buf, format="PNG", pnginfo=meta)
+with open(out, "wb") as f:
+    f.write(buf.getvalue())
+
+sidecar = {"prompt": prompt, "model": model, "size": size,
+           "rendered_size": list(img.size), "output_format": "png",
+           "ref": ref or None, "created": resp.get("created"),
+           "usage": resp.get("usage"), "approved": False}
+with open(out + ".json", "w") as f:
+    json.dump(sidecar, f, indent=2)
+print("wrote %s (%dx%d PNG, prompt embedded, sidecar %s.json)" % (out, img.size[0], img.size[1], out))
+print("usage:", resp.get("usage"))
+EOF

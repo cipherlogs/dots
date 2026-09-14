@@ -1,0 +1,19 @@
+{
+    "esversion": 6,
+    "browser": true,
+    "unused": true,
+    "undef": true,
+    "bitwise": true,
+    "eqeqeq": true,
+    "forin": true,
+    "freeze": true,
+    "latedef": "nofunc",
+    "maxdepth": 2,
+    "nonbsp": true,
+    "regexpu": true,
+    "singleGroups": true,
+    "trailingcomma": "true",
+    "devel": true,
+    "laxbreak": true,
+    "varstmt": true
+}

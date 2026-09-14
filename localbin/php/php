@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+PHP_ROOT="/home/cipherlogs/.local/php-runtime/root"
+export LD_LIBRARY_PATH="$PHP_ROOT/usr/lib:${LD_LIBRARY_PATH:-}"
+exec "$PHP_ROOT/usr/bin/php" "$@"
