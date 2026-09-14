@@ -1,0 +1,10 @@
+Description=Creative keyboard remaps with xremap
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=xremap /home/cipherlogs/.config/xremap/config.yml
+
+[Install]
+WantedBy=multi-user.target
