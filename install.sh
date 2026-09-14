@@ -20,16 +20,28 @@ for u in dotsync-auto.service dotsync-auto.timer; do
   [ -L "$p" ] && rm "$p" && echo "removed manual link: $p"
 done
 
-stow -d "$DOTS/home" -t "$HOME" .
-stow -d "$DOTS/config" -t "$HOME/.config" .
-stow -d "$DOTS/localbin" -t "$HOME/.local/bin" .
+# Stow every package found in each root. Package contents mirror the
+# target 1:1 (e.g. config/nvim/nvim/init.lua -> ~/.config/nvim/init.lua),
+# so new packages work with zero changes here. Explicit loop (never bare
+# `stow .`) so a half-added package can't surprise anyone.
+stow_root() { # $1 = root dir, $2 = target dir
+  local root="$1" target="$2" pkg
+  for pkg in "$root"/*/; do
+    [ -d "$pkg" ] || continue
+    stow -d "$root" -t "$target" "$(basename "$pkg")"
+  done
+}
+
+stow_root "$DOTS/home" "$HOME"
+stow_root "$DOTS/config" "$HOME/.config"
+stow_root "$DOTS/localbin" "$HOME/.local/bin"
 
 # Host overlay last so it wins (e.g. hosts/arch-desktop).
 HOST="$(hostnamectl hostname 2>/dev/null || hostname)"
 if [ -d "$DOTS/hosts/$HOST" ]; then
   echo "stowing host overlay: $HOST"
-  stow -d "$DOTS/hosts/$HOST/home" -t "$HOME" . 2>/dev/null || true
-  stow -d "$DOTS/hosts/$HOST/config" -t "$HOME/.config" . 2>/dev/null || true
+  [ -d "$DOTS/hosts/$HOST/home" ] && stow_root "$DOTS/hosts/$HOST/home" "$HOME"
+  [ -d "$DOTS/hosts/$HOST/config" ] && stow_root "$DOTS/hosts/$HOST/config" "$HOME/.config"
 else
   echo "no host overlay for '$HOST' — skipping."
 fi

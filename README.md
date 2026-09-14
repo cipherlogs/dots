@@ -48,6 +48,9 @@ machines don't fight.
 ## Rules
 
 - `git add` is explicit per file — never `git add .` (state dirs sit next to configs).
+- Packages mirror their target 1:1: `config/nvim/nvim/init.lua` lands at
+  `~/.config/nvim/init.lua`; `home/zsh/.zshrc` lands at `~/.zshrc`.
+  `install.sh` stows every package dir it finds, no registry to update.
 - Secrets go in `*.template` + local-only real file. If a secret touches the
   index, rotate it; history rewrites don't unfire a pushed token.
 - Machine-specific stuff (monitors, mimeapps, autostart) goes under `hosts/`.
