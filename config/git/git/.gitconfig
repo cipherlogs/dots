@@ -1,0 +1,27 @@
+[core]
+    editor = nvim
+    autocrlf = input
+    excludesFile = /home/cipherlogs/.gitignore
+    pager = "less -F"
+    abbrev = 8
+
+[user]
+    name = cipherlogs
+    email = 73669345+0x78logs@users.noreply.github.com
+
+[includeIf "gitdir:~/Repos/Microverse/"]
+    path = ~/Repos/Microverse/.gitconfig
+
+[credential]
+    helper = cache --timeout=14400
+
+[diff]
+    tool = nvimdiff
+
+[init]
+    defaultBranch = main
+
+[color]
+    ui = auto
+[log]
+    abbrevCommit = yes
