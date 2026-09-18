@@ -20,8 +20,12 @@ for f in /sys/class/drm/card*/device/power_dpm_force_performance_level; do
 done
 GOV_FILE="/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor"
 
+OSD="$HOME/.local/bin/osd"
+
 notify() {
-    notify-send "$1" "$2" --icon="${3:-utilities-terminal}" 2>/dev/null || echo "$1: $2"
+    # Routes through the osd helper so repeats replace the previous pill
+    # (dunst stack tag 'power') instead of piling up.
+    "$OSD" power "$1" "$2" "${3:-utilities-terminal}" || echo "$1: $2"
 }
 
 # --- target mode ------------------------------------------------------------

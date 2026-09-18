@@ -74,7 +74,7 @@ bindsym $mod+Shift+F3 exec pcmanfm_pkexec
 bindsym $mod+F5 exec terminal -e 'mocp'
 bindsym $mod+t exec --no-startup-id pkill picom
 bindsym $mod+Ctrl+t exec --no-startup-id picom -b
-bindsym $mod+Shift+d --release exec "killall dunst; exec notify-send 'restart dunst'"
+bindsym $mod+Shift+d --release exec "killall dunst; exec ~/.local/bin/osd dunst 'dunst restarted'"
 bindsym Print exec --no-startup-id i3-scrot
 bindsym $mod+Print --release exec --no-startup-id i3-scrot -w
 bindsym $mod+Shift+Print --release exec --no-startup-id i3-scrot -s
@@ -115,8 +115,8 @@ bindsym $mod+b workspace back_and_forth
 bindsym $mod+Shift+b move container to workspace back_and_forth; workspace back_and_forth
 
 # split orientation
-bindsym $mod+Ctrl+h split h;exec notify-send 'tile horizontally'
-bindsym $mod+Ctrl+v split v;exec notify-send 'tile vertically'
+bindsym $mod+Ctrl+h split h;exec ~/.local/bin/osd layout "tile horizontally"
+bindsym $mod+Ctrl+v split v;exec ~/.local/bin/osd layout "tile vertically"
 bindsym $mod2+q split toggle
 
 # toggle fullscreen mode for the focused container

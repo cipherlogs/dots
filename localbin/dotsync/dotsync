@@ -31,8 +31,13 @@ AUTO=0
 
 notify() {
   [ "${DOTSYNC_NO_NOTIFY:-0}" = "1" ] && return 0
-  command -v notify-send >/dev/null 2>&1 || return 0
-  notify-send "dotsync" "$1" || true
+  # osd replaces the previous dotsync pill (dunst stack tag) instead of
+  # piling up; fall back to notify-send on systems without it.
+  if command -v osd >/dev/null 2>&1; then
+    osd dotsync "dotsync" "$1" || true
+  elif command -v notify-send >/dev/null 2>&1; then
+    notify-send "dotsync" "$1" || true
+  fi
 }
 
 die() { echo "dotsync: $*" >&2; exit 1; }
