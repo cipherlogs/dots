@@ -1,10 +1,14 @@
+[Unit]
 Description=Creative keyboard remaps with xremap
+After=graphical.target
 
 [Service]
 Type=simple
-User=root
-Group=root
-ExecStart=xremap /home/cipherlogs/.config/xremap/config.yml
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/cipherlogs/.Xauthority
+ExecStartPre=/usr/bin/xhost +SI:localuser:root
+ExecStart=/usr/bin/xremap /home/cipherlogs/.config/xremap/config.yml
+Restart=always
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=graphical.target
