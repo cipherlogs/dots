@@ -6,7 +6,7 @@
 - Keep universal, always-needed rules here; move conditional or detailed guidance to the relevant `~/.config/ai/docs/...` file and add a concise pointer.
 - Keep project-only guidance in the project's own `AGENTS.md` and docs. Maintain one source of truth.
 - After adding, moving, or deleting guidance, verify every referenced path exists.
-- For Next.js work, read `~/.config/ai/docs/nextjs.md`.
+- anytime you are about to write next.js code, read `~/.config/ai/docs/nextjs.md`.
 - For React code or component architecture, read `~/.config/ai/docs/react.md`.
 - For shadcn work, read `~/.config/ai/docs/shadcn.md`.
 - For codebase architecture, file relationships, or `/graphify`, read `~/.config/ai/docs/graphify.md`.
