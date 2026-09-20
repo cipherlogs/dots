@@ -61,7 +61,8 @@ ZSH_THEME="robbyrussell"
 # Uncomment the following line if you want to disable marking untracked files
 # under VCS as dirty. This makes repository status check for large repositories
 # much, much faster.
-# DISABLE_UNTRACKED_FILES_DIRTY="true"
+# Enabled 2026-09-20 for prompt speed (was commented).
+DISABLE_UNTRACKED_FILES_DIRTY="true"
 
 # Uncomment the following line if you want to change the command execution time
 # stamp shown in the history command output.
@@ -140,7 +141,18 @@ nodevim() {
 
 # Aliases
 source ~/.aliases
-source /usr/share/nvm/init-nvm.sh
+# Lazy-load nvm 2026-09-20 (was `source /usr/share/nvm/init-nvm.sh` every shell, ~0.2s).
+# First node/nvm/npm/npx call loads real nvm, then re-executes.
+export NVM_DIR="$HOME/.nvm"
+_lazy_nvm_loader() {
+  unset -f node nvm npm npx 2>/dev/null
+  # shellcheck disable=SC1091
+  [ -s /usr/share/nvm/init-nvm.sh ] && source /usr/share/nvm/init-nvm.sh
+}
+for _cmd in node nvm npm npx; do
+  eval "${_cmd}() { _lazy_nvm_loader; ${_cmd} \"\$@\"; }"
+done
+# System node 26.8.1 stays on PATH until first nvm use; default nvm alias is `node` (v25.9.0).
 
 export BROWSER=/usr/bin/google-chrome-stable
 
