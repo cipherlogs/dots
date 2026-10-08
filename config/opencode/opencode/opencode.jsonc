@@ -5,7 +5,7 @@
     "prune": false,
     "reserved": 5000
   },
-  "plugin": [],
+  "plugin": ["@dietrichgebert/ponytail"],
   "permission": {
     "edit": "allow",
     "bash": "allow",
@@ -83,6 +83,52 @@
               "reasoning.encrypted_content"
             ]
           }
+        }
+      }
+    },
+    "nv": {
+      "name": "NVIDIA NIM",
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://integrate.api.nvidia.com/v1",
+        "apiKey": "{env:NVIDIA_BUILD}",
+        "headers": {
+          "HTTP-Referer": "https://opencode.ai/",
+          "X-Title": "opencode",
+          "X-BILLING-INVOKE-ORIGIN": "OpenCode"
+        }
+      },
+      "models": {
+        "NV:deepseek-ai/deepseek-v4.1-flash": {
+          "id": "deepseek-ai/deepseek-v4.1-flash",
+          "name": "NV DeepSeek V4.1 Flash",
+          "reasoning": true,
+          "attachment": true,
+          "tool_call": true,
+          "temperature": true,
+          "interleaved": { "field": "reasoning_content" },
+          "modalities": { "input": ["text", "image"], "output": ["text"] },
+          "limit": { "context": 1048576, "output": 262144 }
+        },
+        "NV:z-ai/glm-5.3": {
+          "id": "z-ai/glm-5.3",
+          "name": "NV GLM-5.3",
+          "reasoning": true,
+          "tool_call": true,
+          "temperature": true,
+          "interleaved": { "field": "reasoning_content" },
+          "limit": { "context": 1000000, "output": 131072 }
+        },
+        "NV:moonshotai/kimi-k3": {
+          "id": "moonshotai/kimi-k3",
+          "name": "NV Kimi K3",
+          "reasoning": true,
+          "attachment": true,
+          "tool_call": true,
+          "temperature": false,
+          "interleaved": { "field": "reasoning_content" },
+          "modalities": { "input": ["text", "image", "video"], "output": ["text"] },
+          "limit": { "context": 1048576, "output": 131072 }
         }
       }
     }

@@ -11,3 +11,4 @@
 - For shadcn work, read `~/.config/ai/docs/shadcn.md`.
 - For codebase architecture, file relationships, or `/graphify`, read `~/.config/ai/docs/graphify.md`.
 - For GitHub operations or GitHub documentation, read `~/.config/ai/docs/github.md`.
+- Before you implement or write any code, read `~/.config/ai/docs/ask.md`.
