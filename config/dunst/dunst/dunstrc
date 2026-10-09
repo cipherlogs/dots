@@ -1,6 +1,6 @@
 [global]
     frame_width = 1
-    frame_color = "#788388"
+    frame_color = "#3a3a3c"
     
     font = Noto Sans 10
     
@@ -56,14 +56,13 @@
     ignore_newline = no
     
     
-    # Bottom-center pill placement (mac-style HUD). New width/origin/
-    # offset scheme replaces the legacy geometry option.
-    width = 240
-    origin = bottom-center
-    offset = (0, 60)
+    # macOS-style: top-right stack, floating cards.
+    width = 360
+    origin = top-right
+    offset = (20, 20)
 
-    # Rounded pill corners everywhere (no compositor needed).
-    corner_radius = 8
+    # Large rounded corners, drawn by dunst (no compositor needed).
+    corner_radius = 16
 
     # Slim shadcn-style progress track (bar width drives pill size).
     progress_bar_height = 6
@@ -76,10 +75,9 @@
     # width is 0.
     shrink = yes
     
-    # The transparency of the window.  Range: [0; 100].
-    # This option will only work if a compositing windowmanager is
-    # present (e.g. xcompmgr, compiz, etc.).
-    transparency = 15
+    # Frosted-glass target: needs a compositor (e.g. picom) to show.
+    # Without one this renders as a clean solid card.
+    transparency = 10
     
     # Don't remove messages, if the user is idle (no mouse or keyboard input)
     # for longer than idle_threshold seconds.
@@ -118,10 +116,8 @@
     # This adds empty space above and under the text.
     line_height = 0
     
-    # Draw a line of "separator_height" pixel height between two
-    # notifications.
-    # Set to 0 to disable.
-    separator_height = 1
+    # No divider lines between stacked cards (macOS floats them).
+    separator_height = 0
     
     # Inner air: shadcn p-4-ish density (global, applies to all).
     padding = 14
@@ -152,7 +148,7 @@
     icon_position = left
 
     # Paths to default icons.
-    icon_path = /usr/share/icons/Adwaita/16x16/status/:/usr/share/icons/Adwaita/16x16/devices/
+    icon_path = /usr/share/icons/Adwaita/16x16/status/:/usr/share/icons/Adwaita/16x16/devices/:/usr/share/icons/hicolor/48x48/status/
 
     # Limit icons size.
     max_icon_size=128
@@ -182,19 +178,24 @@
 [urgency_low]
     # IMPORTANT: colors have to be defined in quotation marks.
     # Otherwise the "#" and following would be interpreted as a comment.
-    background = "#263238"
-    foreground = "#556064"
+    background = "#2c2c2e"
+    foreground = "#aeaeb2"
     timeout = 10
 
 [urgency_normal]
-    background = "#263238"
-    foreground = "#F9FAF9"
+    background = "#1c1c1e"
+    foreground = "#ffffff"
     timeout = 10
 
 [urgency_critical]
-    background = "#D62929"
-    foreground = "#F9FAF9"
+    background = "#ff453a"
+    foreground = "#ffffff"
     timeout = 0
+
+[battery]
+    appname = battery
+    format = "<b>%s</b>\n%b"
+    max_icon_size = 32
 
 
 # Every section that isn't one of the above is interpreted as a rules to
