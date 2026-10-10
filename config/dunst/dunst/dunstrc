@@ -56,13 +56,13 @@
     ignore_newline = no
     
     
-    # macOS-style: top-right stack, floating cards.
+    # macOS-style cards, bottom-center stack (all notifications).
     width = 360
-    origin = top-right
-    offset = (20, 20)
+    origin = bottom-center
+    offset = (0, 60)
 
-    # Large rounded corners, drawn by dunst (no compositor needed).
-    corner_radius = 16
+    # Apple-style continuous corners (~12pt, tighter than before).
+    corner_radius = 12
 
     # Slim shadcn-style progress track (bar width drives pill size).
     progress_bar_height = 6
@@ -188,7 +188,7 @@
     timeout = 10
 
 [urgency_critical]
-    background = "#ff453a"
+    background = "#8e1e1e"
     foreground = "#ffffff"
     timeout = 0
 
