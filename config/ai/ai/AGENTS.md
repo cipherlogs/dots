@@ -1,7 +1,4 @@
 # Global Agent Instructions
-
-<!-- This is the single shared source. It is symlinked to OpenCode, Claude Code, and Codex globals. Edit here and all three pick it up. -->
-
 - This file applies to every project; keep project-specific guidance in the project's own `AGENTS.md`.
 - Keep universal, always-needed rules here; move conditional or detailed guidance to the relevant `~/.config/ai/docs/...` file and add a concise pointer.
 - Keep project-only guidance in the project's own `AGENTS.md` and docs. Maintain one source of truth.
@@ -12,3 +9,4 @@
 - For codebase architecture, file relationships, or `/graphify`, read `~/.config/ai/docs/graphify.md`.
 - For GitHub operations or GitHub documentation, read `~/.config/ai/docs/github.md`.
 - Before you implement or write any code, read `~/.config/ai/docs/ask.md`.
+- Run /unslop and /wait-what skills over anything a person/human will read
