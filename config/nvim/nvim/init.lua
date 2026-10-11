@@ -1,59 +1,24 @@
--- Globals
 vim.g.mapleader = " "
 vim.g.maplocalleader = ","
+vim.g.have_nerd_font = true
 
-vim.g.lua_snippets_path = vim.fn.stdpath "config" .. "/lua/snippets/"
-vim.g.base46_cache = vim.fn.stdpath "data" .. "/nvchad/base46/"
-vim.g.mapleader = " "
-
--- bootstrap lazy and all plugins
 local lazypath = vim.fn.stdpath "data" .. "/lazy/lazy.nvim"
-
-if not vim.loop.fs_stat(lazypath) then
-  local repo = "https://github.com/folke/lazy.nvim.git"
+if not vim.uv.fs_stat(lazypath) then
   vim.fn.system {
     "git",
     "clone",
     "--filter=blob:none",
-    repo,
+    "https://github.com/folke/lazy.nvim.git",
     "--branch=stable",
     lazypath,
   }
 end
-
 vim.opt.rtp:prepend(lazypath)
 
-local config = {
-  require "configs.lazy",
-  change_detection = {
-    notify = false,
-  },
-  checker = {
-    enabled = true,
-    notify = false,
-  },
-}
+require "options"
+require("lazy").setup({ import = "plugins" }, require "configs.lazy")
 
--- load plugins
-require("lazy").setup({
-  {
-    "NvChad/NvChad",
-    lazy = false,
-    branch = "v2.5",
-    import = "nvchad.plugins",
-    config = function()
-      require "options"
-    end,
-  },
-  { import = "plugins" },
-}, config)
+pcall(vim.cmd.colorscheme, "tokyonight-night")
 
--- load theme
-dofile(vim.g.base46_cache .. "defaults")
-dofile(vim.g.base46_cache .. "statusline")
-
-require "nvchad.autocmds"
-
-vim.schedule(function()
-  require "mappings"
-end)
+require "autocmds"
+require "mappings"

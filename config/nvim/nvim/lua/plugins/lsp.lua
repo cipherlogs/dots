@@ -3,29 +3,38 @@ return {
     "neovim/nvim-lspconfig",
     event = { "BufReadPre", "BufNewFile" },
     config = function()
-      require("nvchad.configs.lspconfig").defaults()
       require "configs.lspconfig"
     end,
   },
 
   {
-    "williamboman/mason.nvim",
+    "mason-org/mason.nvim",
+    cmd = { "Mason", "MasonInstall", "MasonUpdate" },
+    event = { "BufReadPre", "BufNewFile" },
+    opts = {},
+  },
+
+  {
+    "WhoIsSethDaniel/mason-tool-installer.nvim",
+    dependencies = { "mason-org/mason.nvim" },
+    event = { "BufReadPre", "BufNewFile" },
     opts = {
-      pkgs = {
+      ensure_installed = {
         "lua-language-server",
+        "stylua",
+        "typescript-language-server",
         "tailwindcss-language-server",
         "emmet-language-server",
-        "haskell-language-server",
-        "ts_ls",
         "eslint-lsp",
         "css-lsp",
         "html-lsp",
         "biome",
         "prettierd",
         "json-lsp",
-        "fourmolu",
         "ruff",
         "prisma-language-server",
+        "haskell-language-server",
+        "fourmolu",
       },
     },
   },

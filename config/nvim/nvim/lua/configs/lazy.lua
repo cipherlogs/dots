@@ -1,6 +1,8 @@
 return {
   defaults = { lazy = true },
-  install = { colorscheme = { "nvchad" } },
+  install = { colorscheme = { "tokyonight-night", "habamax" } },
+  change_detection = { notify = false },
+  checker = { enabled = false },
 
   ui = {
     icons = {
@@ -35,12 +37,6 @@ return {
         "zipPlugin",
         "tutor",
         "rplugin",
-        "syntax",
-        "synmenu",
-        "optwin",
-        "compiler",
-        "bugreport",
-        "ftplugin",
       },
     },
   },

@@ -1,53 +1,45 @@
 return {
   ensure_installed = {
-    -- defaults
     "vim",
     "lua",
     "vimdoc",
-
-    -- web dev
+    "luadoc",
+    "bash",
     "html",
     "css",
     "javascript",
     "json",
     "typescript",
     "tsx",
-
-    -- others
-    "bash",
-    "solidity",
+    "markdown",
+    "yaml",
+    "toml",
+    "xml",
+    "sql",
+    "prisma",
     "python",
+    "haskell",
+    "solidity",
     "git_config",
     "git_rebase",
     "gitcommit",
     "gitignore",
-    "haskell",
     "ssh_config",
-    "xml",
-    "yaml",
-    "toml",
-    "markdown",
-    "sql",
-    "prisma",
-    "luadoc",
     "printf",
-    "vim",
-    "vimdoc",
   },
 
-  autotag = { enable = true },
   indent = { enable = true },
 
   highlight = {
     enable = true,
-    use_languagetree = true,
+    use_languagetree = false,
   },
 
   incremental_selection = {
     enable = true,
     keymaps = {
-      init_selection = "<Space><Space>",
-      node_incremental = "<Space>",
+      init_selection = "<C-Space><C-Space>",
+      node_incremental = "<C-Space>",
       node_decremental = "<bs>",
       scope_incremental = false,
     },
