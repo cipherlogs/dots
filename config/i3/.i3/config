@@ -384,15 +384,15 @@ set_from_resource $term_color15    color15
 # hide/unhide i3status bar
 bindsym $mod+m bar mode toggle
 
-# Theme colors
+# Theme colors — tokyodark (matches nvim tokyodark + Normal bg #06080A)
 # class                   border  backgr. text    indic.   child_border
-  client.focused          #556064 #556064 #80FFF9 #FDF6E3
-  client.focused_inactive #2F3D44 #2F3D44 #1ABC9C #454948
-  client.unfocused        #2F3D44 #2F3D44 #1ABC9C #454948
-  client.urgent           #CB4B16 #FDF6E3 #1ABC9C #268BD2
+  client.focused          #7199EE #11121D #A0A8CD #98C379
+  client.focused_inactive #212234 #212234 #4A5057 #353945
+  client.unfocused        #212234 #212234 #4A5057 #353945
+  client.urgent           #EE6D85 #EE6D85 #06080A #D7A65F
   client.placeholder      #000000 #0c0c0c #ffffff #000000 
 
-  client.background       #2B2C2B
+  client.background       #06080A
 
 #############################
 ### settings for i3-gaps: ###

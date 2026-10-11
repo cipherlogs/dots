@@ -18,7 +18,6 @@ return {
     "sql",
     "prisma",
     "python",
-    "haskell",
     "solidity",
     "git_config",
     "git_rebase",

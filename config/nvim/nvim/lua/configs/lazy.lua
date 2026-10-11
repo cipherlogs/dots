@@ -1,8 +1,9 @@
 return {
   defaults = { lazy = true },
-  install = { colorscheme = { "tokyonight-night", "habamax" } },
+  install = { colorscheme = { "tokyodark", "habamax" } },
   change_detection = { notify = false },
   checker = { enabled = false },
+  rocks = { enabled = false }, -- ponytail: no rockspec builds; silences luarocks checkhealth
 
   ui = {
     icons = {

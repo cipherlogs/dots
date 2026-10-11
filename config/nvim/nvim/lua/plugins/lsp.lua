@@ -33,8 +33,6 @@ return {
         "json-lsp",
         "ruff",
         "prisma-language-server",
-        "haskell-language-server",
-        "fourmolu",
       },
     },
   },

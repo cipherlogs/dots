@@ -3,8 +3,36 @@
 # draw_bold_text_with_bright_colors = false
 
 [colors.primary]
-background = "#0E0E16"
-foreground = "#C0CAF5"
+background = "#06080A"
+foreground = "#A0A8CD"
+
+[colors.cursor]
+text = "#06080A"
+cursor = "#A0A8CD"
+
+[colors.selection]
+text = "#11121D"
+background = "#98C379"
+
+[colors.normal]
+black = "#06080A"
+red = "#EE6D85"
+green = "#95C561"
+yellow = "#D7A65F"
+blue = "#7199EE"
+magenta = "#A485DD"
+cyan = "#38A89D"
+white = "#A0A8CD"
+
+[colors.bright]
+black = "#212234"
+red = "#EE6D85"
+green = "#95C561"
+yellow = "#D7A65F"
+blue = "#7199EE"
+magenta = "#A485DD"
+cyan = "#38A89D"
+white = "#A0A8CD"
 
 [cursor.style]
 blinking = "On"
