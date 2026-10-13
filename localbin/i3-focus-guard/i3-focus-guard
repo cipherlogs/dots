@@ -71,6 +71,23 @@ def ppid_of(pid):
     return int(stat.rsplit(")", 1)[1].split()[1])  # field 4
 
 
+def lineage(new_pid, ppid_fn=None):
+    """Self plus OS ancestors, nearest first (pure)."""
+    getppid = ppid_fn or ppid_of
+    chain, seen, pid, depth = [new_pid], {new_pid}, new_pid, 0
+    while depth < 32:
+        try:
+            pid = getppid(pid)
+        except Exception:
+            break
+        if pid in (0, 1) or pid in seen:
+            break
+        seen.add(pid)
+        chain.append(pid)
+        depth += 1
+    return chain
+
+
 def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
     """Nearest ancestor workspace of new_pid, or None.
 
@@ -78,19 +95,9 @@ def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
     pid owning a visible window wins. Self pid is never consulted, so a
     single-process browser reusing its pid yields no origin (urgency-only).
     """
-    getppid = ppid_fn or ppid_of
-    seen, pid, depth = {new_pid}, new_pid, 0
-    while depth < 32:
-        try:
-            pid = getppid(pid)
-        except Exception:
-            return None
-        if pid in (0, 1) or pid in seen:
-            return None
-        seen.add(pid)
+    for pid in lineage(new_pid, ppid_fn)[1:]:
         if pid in pid_to_ws:
             return pid_to_ws[pid]
-        depth += 1
     return None
 
 
@@ -102,18 +109,8 @@ def family_workspace(new_pid, pid_to_ws, ppid_fn=None):
     Exactly one distinct workspace wins without consulting ancestry;
     split or windowless families return None (caller falls back).
     """
-    getppid = ppid_fn or ppid_of
-    lineage, pid, depth = {new_pid}, new_pid, 0
-    while depth < 32:
-        try:
-            pid = getppid(pid)
-        except Exception:
-            break
-        if pid in (0, 1) or pid in lineage:
-            break
-        lineage.add(pid)
-        depth += 1
-    found = set(ws for q, ws in pid_to_ws.items() if q in lineage)
+    seen = set(lineage(new_pid, ppid_fn))
+    found = set(ws for q, ws in pid_to_ws.items() if q in seen)
     return found.pop() if len(found) == 1 else None
 
 
@@ -215,6 +212,11 @@ def set_urgent(xid):
         log("urgent-err", xid, e)
 
 
+def ensure_tiled(sock_path, con_id):
+    """Floating off so delivered arrivals tile; scratchpad float never leaks."""
+    run(sock_path, '[con_id=%s] floating disable' % con_id)
+
+
 def focused_leaf_id(sock_path):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     found = [n["id"] for n, _ in walk(tree) if n.get("focused")]
@@ -287,7 +289,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
             log("hide-reply", con_id, "success" if ok else "failed")
         except Exception as e:
             log("stage-err", con_id, e)
-            log("hide-reply", con_id, "failed")
+            log("hide-reply", con_id, "error")
     time.sleep(0.4)
     node = find_node(sock_path, con_id)
     leaf = focused_leaf_id(sock_path)
@@ -311,24 +313,26 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
     if not staged and tree_now is not None:
         new_ws = workspace_name(tree_now, con_id) or cur_ws
     if tree_now is not None and ws_empty_except(tree_now, new_ws, con_id):
-        log("firstwin", con_id, "leave focused")
+        log("firstwin", con_id, "to", new_ws, "leave focused")
         if staged:
             run(sock_path, '[con_id=%s] move to workspace "%s"'
                 % (con_id, new_ws))
-            run(sock_path, '[con_id=%s] floating disable' % con_id)
+        ensure_tiled(sock_path, con_id)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
                                  lambda i: find_node(sock_path, i)))
         try:
             if is_automation_window(node):
-                if staged:
+                autom_ws = (workspace_name(tree_now, con_id)
+                            if tree_now is not None else None)
+                if not staged and autom_ws == "10":
+                    log("autom-skip", con_id)
+                else:
                     run(sock_path, '[con_id=%s] move to workspace "10"'
                         % con_id)
-                    run(sock_path, '[con_id=%s] floating disable' % con_id)
+                    ensure_tiled(sock_path, con_id)
                     log("autom-rescue", con_id)
-                else:
-                    log("autom-skip", con_id)
             else:
                 origin = None
                 try:
@@ -344,15 +348,16 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 if origin and origin != new_ws:
                     run(sock_path, '[con_id=%s] move to workspace "%s"'
                         % (con_id, origin))
-                    run(sock_path, '[con_id=%s] floating disable' % con_id)
+                    ensure_tiled(sock_path, con_id)
                     log("moveback", con_id, "to", origin)
                 elif staged:
                     run(sock_path, '[con_id=%s] move to workspace "%s"'
                         % (con_id, new_ws))
-                    run(sock_path, '[con_id=%s] floating disable' % con_id)
+                    ensure_tiled(sock_path, con_id)
                     log("unstage", con_id, "to", new_ws)
                 else:
-                    log("fallback", con_id, "urgency-only")
+                    ensure_tiled(sock_path, con_id)
+                    log("fallback", con_id, "urgency-only on", new_ws)
             # Gap births can sit off the focused workspace; focusing there
             # would switch desktops, so refocus stays on the focused one.
             if (victim is not None and victim != leaf
