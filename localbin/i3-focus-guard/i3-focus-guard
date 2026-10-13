@@ -214,6 +214,69 @@ def pid_of_window(xid):
     return int(out.split("=", 1)[1].strip())
 
 
+def tree_windows(tree):
+    """(con_id, xid) pairs for window-bearing cons (pure)."""
+    return set((n["id"], n.get("window"))
+               for n, _ in walk(tree) if n.get("window"))
+
+
+def handle_new(sock_path, con_id, cur_ws, history):
+    """Origin move-back + refocus + urgency for one new window."""
+    time.sleep(0.4)
+    node = find_node(sock_path, con_id)
+    leaf = focused_leaf_id(sock_path)
+    log("new", con_id, "leaf=", leaf,
+        "mapped=", node is not None and node.get("window"))
+    if node is None or leaf is None or not contains(node, leaf):
+        return node
+    try:
+        tree_now = json.loads(run(sock_path, msgtype="get_tree"))
+    except Exception:
+        tree_now = None
+    if tree_now is not None and is_first_window_on_ws(
+            tree_now, con_id):
+        log("firstwin", con_id, "leave focused")
+    else:
+        new_ws = (workspace_name(tree_now, con_id)
+                  if tree_now is not None else None) or cur_ws
+        victim = (stack_victim(sock_path, con_id, new_ws)
+                  or live_victim(history, con_id,
+                                 lambda i: find_node(sock_path, i)))
+        try:
+            if is_automation_window(node):
+                log("autom-skip", con_id)
+            else:
+                origin = None
+                try:
+                    if node.get("window"):
+                        new_pid = pid_of_window(node["window"])
+                        origin = resolve_origin(
+                            new_pid,
+                            pid_workspace_map(
+                                sock_path,
+                                exclude_con_id=con_id))
+                except Exception as e:
+                    log("nopid", con_id, e)
+                if origin and origin != new_ws:
+                    run(sock_path, '[con_id=%s] move to workspace "%s"'
+                        % (con_id, origin))
+                    log("moveback", con_id, "to", origin)
+                else:
+                    log("fallback", con_id, "urgency-only")
+            if (victim is not None and victim != leaf
+                    and find_node(sock_path, victim) is not None):
+                run(sock_path, '[con_id=%s] focus' % victim)
+                log("refocus", leaf, "->", victim)
+            if node.get("window"):
+                # last: the hint sticks only once the
+                # window is unfocused (set while focused
+                # is cleared)
+                set_urgent(node["window"])
+        except Exception as e:
+            log("err", e)
+    return node
+
+
 def main():
     try:  # single instance: exit if a live guard already holds the pidfile
         with open(PIDFILE) as f:
@@ -234,6 +297,10 @@ def main():
     boot_focused = focused_leaf_id(sock_path)
     if boot_focused is not None:
         history.append(boot_focused)
+    try:  # baseline so pre-existing windows are never treated as new
+        known = tree_windows(json.loads(run(sock_path, msgtype="get_tree")))
+    except Exception:
+        known = set()
     log("ready, ws=%s" % cur_ws)
     while True:
         try:
@@ -241,12 +308,22 @@ def main():
                 ["i3-msg", "-s", sock_path, "-t", "subscribe",
                  '["window","workspace"]'],
                 stdout=subprocess.PIPE, text=True, bufsize=1)
-            try:  # subscribe streams die silently; resync so origin
-                # resolution never acts on a stale focused workspace
+            try:  # subscribe streams die silently (i3-msg exits
+                # after window::new); resync so origin resolution
+                # never acts on a stale focused workspace, then
+                # reconcile windows mapped while unsubscribed
                 ws = json.loads(run(sock_path, msgtype="get_workspaces"))
                 cur_ws = next(w["name"] for w in ws if w["focused"])
             except Exception as e:
                 log("wsresync", e)
+            try:
+                cur = tree_windows(json.loads(run(sock_path, msgtype="get_tree")))
+            except Exception as e:
+                log("resync", e)
+                cur = set()
+            for con_id, _xid in sorted(cur - known):
+                handle_new(sock_path, con_id, cur_ws, history)
+            known = set(cur)
             for line in p.stdout:
                 try:
                     ev = json.loads(line)
@@ -262,57 +339,8 @@ def main():
                             history.append(c["id"])
                             del history[:-20]
                     elif ev.get("change") == "new":
-                        time.sleep(0.4)
-                        node = find_node(sock_path, c["id"])
-                        leaf = focused_leaf_id(sock_path)
-                        log("new", c["id"], "leaf=", leaf,
-                            "mapped=", node is not None and node.get("window"))
-                        if node is not None and leaf is not None and contains(node, leaf):
-                            try:
-                                tree_now = json.loads(run(sock_path, msgtype="get_tree"))
-                            except Exception:
-                                tree_now = None
-                            if tree_now is not None and is_first_window_on_ws(
-                                    tree_now, c["id"]):
-                                log("firstwin", c["id"], "leave focused")
-                            else:
-                                new_ws = (workspace_name(tree_now, c["id"])
-                                          or cur_ws)
-                                victim = (stack_victim(sock_path, c["id"], new_ws)
-                                          or live_victim(history, c["id"],
-                                                         lambda i: find_node(sock_path, i)))
-                                try:
-                                    if is_automation_window(node):
-                                        log("autom-skip", c["id"])
-                                    else:
-                                        origin = None
-                                        try:
-                                            if node.get("window"):
-                                                new_pid = pid_of_window(node["window"])
-                                                origin = resolve_origin(
-                                                    new_pid,
-                                                    pid_workspace_map(
-                                                        sock_path,
-                                                        exclude_con_id=c["id"]))
-                                        except Exception as e:
-                                            log("nopid", c["id"], e)
-                                        if origin and origin != new_ws:
-                                            run(sock_path, '[con_id=%s] move to workspace "%s"'
-                                                % (c["id"], origin))
-                                            log("moveback", c["id"], "to", origin)
-                                        else:
-                                            log("fallback", c["id"], "urgency-only")
-                                    if (victim is not None and victim != leaf
-                                            and find_node(sock_path, victim) is not None):
-                                        run(sock_path, '[con_id=%s] focus' % victim)
-                                        log("refocus", leaf, "->", victim)
-                                    if node.get("window"):
-                                        # last: the hint sticks only once the
-                                        # window is unfocused (set while focused
-                                        # is cleared)
-                                        set_urgent(node["window"])
-                                except Exception as e:
-                                    log("err", e)
+                        node = handle_new(sock_path, c["id"], cur_ws, history)
+                        known.add((c["id"], node.get("window") if node else None))
             p.wait()
             log("resub")  # subscribe stream ended; reconnecting
         except Exception as e:
