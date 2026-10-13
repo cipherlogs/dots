@@ -262,13 +262,6 @@ no_focus [class="(?i)^Pale moon$"]
 no_focus [class="(?i)^qutebrowser$"]
 no_focus [class="(?i)^Microsoft-edge$"]
 
-# i3-true-isolation birth diversion (ticket 04, revived): hide every newborn
-# in the scratchpad at manage time, zero trip. Proven necessary by
-# hide-reply success + visible flash in the diary (in-daemon hide loses
-# the map race). The guard still delivers each window exactly once;
-# automation pins are rescued to workspace 10 by the daemon.
-for_window [all] move to scratchpad
-
 # reload the configuration file
 bindsym $mod+Shift+c reload
 
