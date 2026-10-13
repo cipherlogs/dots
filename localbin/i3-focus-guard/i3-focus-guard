@@ -217,6 +217,25 @@ def ensure_tiled(sock_path, con_id):
     run(sock_path, '[con_id=%s] floating disable' % con_id)
 
 
+def deliver_to(sock_path, con_id, target_ws, cur_ws, staged):
+    """Move a birth to its delivery workspace. Returns True when the
+    window was shown from the scratchpad (focus stolen, caller refocuses).
+
+    i3 misroutes `move to workspace` when the target is the visible
+    workspace (lands elsewhere, still replies success), so staged windows
+    bound for the focused workspace are shown from the scratchpad instead.
+    """
+    if target_ws == cur_ws:
+        if not staged:
+            run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
+            log("restage", con_id)
+        run(sock_path, '[con_id=%s] scratchpad show' % con_id)
+        return True
+    run(sock_path, '[con_id=%s] move to workspace "%s"'
+        % (con_id, target_ws))
+    return False
+
+
 def focused_leaf_id(sock_path):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     found = [n["id"] for n, _ in walk(tree) if n.get("focused")]
@@ -315,13 +334,13 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
     if tree_now is not None and ws_empty_except(tree_now, new_ws, con_id):
         log("firstwin", con_id, "to", new_ws, "leave focused")
         if staged:
-            run(sock_path, '[con_id=%s] move to workspace "%s"'
-                % (con_id, new_ws))
+            deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
         ensure_tiled(sock_path, con_id)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
                                  lambda i: find_node(sock_path, i)))
+        shown = False
         try:
             if is_automation_window(node):
                 autom_ws = (workspace_name(tree_now, con_id)
@@ -329,8 +348,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 if not staged and autom_ws == "10":
                     log("autom-skip", con_id)
                 else:
-                    run(sock_path, '[con_id=%s] move to workspace "10"'
-                        % con_id)
+                    shown = deliver_to(sock_path, con_id, "10", cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
                     log("autom-rescue", con_id)
             else:
@@ -346,13 +364,11 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 except Exception as e:
                     log("nopid", con_id, e)
                 if origin and origin != new_ws:
-                    run(sock_path, '[con_id=%s] move to workspace "%s"'
-                        % (con_id, origin))
+                    shown = deliver_to(sock_path, con_id, origin, cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
                     log("moveback", con_id, "to", origin)
                 elif staged:
-                    run(sock_path, '[con_id=%s] move to workspace "%s"'
-                        % (con_id, new_ws))
+                    shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
                     log("unstage", con_id, "to", new_ws)
                 else:
@@ -360,7 +376,9 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                     log("fallback", con_id, "urgency-only on", new_ws)
             # Gap births can sit off the focused workspace; focusing there
             # would switch desktops, so refocus stays on the focused one.
-            if (victim is not None and victim != leaf
+            # Scratchpad-show deliveries steal focus even when the victim is
+            # the pre-birth leaf, so those always refocus.
+            if (victim is not None and (shown or victim != leaf)
                     and new_ws == cur_ws
                     and find_node(sock_path, victim) is not None):
                 run(sock_path, '[con_id=%s] focus' % victim)
