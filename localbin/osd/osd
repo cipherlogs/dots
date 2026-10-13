@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# osd — send a self-replacing dunst notification.
+#
+# usage: osd <tag> <summary> [body] [icon] [timeout_ms]
+#
+# A new notification with the same <tag> replaces the previous one instead
+# of piling up. Tags are per-kind: 'power' replaces 'power', 'layout'
+# replaces 'layout', etc.
+#
+# Examples:
+#   osd power "Power: Performance" "GPU high · CPU performance"
+#   osd layout "tile horizontally"
+#   osd dunst "dunst restarted" "" "" 5000
+
+set -u
+
+tag="${1:?usage: osd <tag> <summary> [body] [icon] [timeout_ms]}"
+summary="${2:?usage: osd <tag> <summary> [body] [icon] [timeout_ms]}"
+body="${3:-}"
+icon="${4:-}"
+timeout="${5:-3000}"
+
+if command -v dunstify >/dev/null 2>&1; then
+    args=(-a "$tag" --stack-tag="$tag" -t "$timeout")
+    [ -n "$icon" ] && args+=(-i "$icon")
+    dunstify "${args[@]}" "$summary" "$body" || true
+elif command -v notify-send >/dev/null 2>&1; then
+    notify-send "$summary" "$body" 2>/dev/null || true
+fi
