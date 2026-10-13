@@ -3,8 +3,8 @@
 
 Policy: only windows mapped within MANUAL_GRACE_SEC of a manual keybinding
 exec take focus naturally. Any other newly-mapped window that grabs focus
-gets focus taken back, and if its process started before your last workspace
-switch it is moved back to that previous workspace.
+gets focus taken back, and if its process ancestry reaches a visible window
+it is moved back to that ancestor workspace (origin).
 
 shortcut: commands typed by hand in a terminal count as background (click once to focus).
 """
@@ -34,17 +34,74 @@ def run(sock_path, payload=None, msgtype="command"):
     return subprocess.check_output(cmd).decode()
 
 
-def proc_start_epoch(pid):
-    """Epoch seconds when pid started. Raises on failure."""
+def ppid_of(pid):
+    """Parent pid of pid via /proc. Raises on failure."""
     with open("/proc/%d/stat" % pid) as f:
         stat = f.read()
-    start_ticks = int(stat.rsplit(")", 1)[1].split()[19])  # field 22
-    ticks = os.sysconf("SC_CLK_TCK")
-    with open("/proc/stat") as f:
-        for line in f:
-            if line.startswith("btime "):
-                return int(line.split()[1]) + start_ticks / ticks
-    raise RuntimeError("no btime")
+    return int(stat.rsplit(")", 1)[1].split()[1])  # field 4
+
+
+def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
+    """Nearest ancestor workspace of new_pid, or None.
+
+    Walks OS process ancestry starting at the parent; the first ancestor
+    pid owning a visible window wins. Self pid is never consulted, so a
+    single-process browser reusing its pid yields no origin (urgency-only).
+    """
+    getppid = ppid_fn or ppid_of
+    seen, pid, depth = {new_pid}, new_pid, 0
+    while depth < 32:
+        try:
+            pid = getppid(pid)
+        except Exception:
+            return None
+        if pid in (0, 1) or pid in seen:
+            return None
+        seen.add(pid)
+        if pid in pid_to_ws:
+            return pid_to_ws[pid]
+        depth += 1
+    return None
+
+
+def pid_workspace_map(sock_path, exclude_con_id=None):
+    """Map owner pid -> workspace name for visible windows.
+
+    Visible = on a numbered workspace (num >= 0, not __i3_scratch).
+    """
+    tree = json.loads(run(sock_path, msgtype="get_tree"))
+    pid_to_ws, stack = {}, [(tree, None, -1)]
+    while stack:
+        n, ws_name, ws_num = stack.pop()
+        if n.get("type") == "workspace":
+            ws_name, ws_num = n.get("name"), n.get("num", -1)
+        if n.get("window") and n.get("id") != exclude_con_id:
+            if ws_name and not ws_name.startswith("__i3") and ws_num != -1:
+                try:
+                    pid_to_ws[pid_of_window(n["window"])] = ws_name
+                except Exception:
+                    pass
+        for c in n.get("nodes", []) + n.get("floating_nodes", []):
+            stack.append((c, ws_name, ws_num))
+    return pid_to_ws
+
+
+def is_automation_window(node):
+    """True for ws10 automation pins (assign + no_focus pairs); never move."""
+    wp = node.get("window_properties") or {}
+    for k in ("class", "instance"):
+        v = wp.get(k) or ""
+        if v.startswith("Syntheflow"):
+            return True
+    return False
+
+
+def live_victim(history, new_id, find_fn):
+    """Newest history entry that isn't the new window and still exists."""
+    for h in reversed(history):
+        if h != new_id and find_fn(h) is not None:
+            return h
+    return None
 
 
 def find_node(sock_path, con_id):
@@ -98,7 +155,6 @@ def main():
         f.write(str(os.getpid()))
     ws = json.loads(run(sock_path, msgtype="get_workspaces"))
     cur_ws = next(w["name"] for w in ws if w["focused"])
-    prev_ws, switch_time = cur_ws, 0.0
     last_manual = 0.0
     history = []  # recent focused ids; victim = newest entry that isn't the new window
     boot_focused = focused_leaf_id(sock_path)
@@ -124,7 +180,6 @@ def main():
                         last_manual = now
                 elif "current" in ev:
                     if ev.get("change") == "focus":
-                        prev_ws, switch_time = cur_ws, now
                         cur_ws = ev["current"]["name"]
                 elif "container" in ev:
                     c = ev["container"]
@@ -133,7 +188,8 @@ def main():
                             history.append(c["id"])
                             del history[:-20]
                     elif ev.get("change") == "new" and now - last_manual > MANUAL_GRACE_SEC:
-                        victim = next((h for h in reversed(history) if h != c["id"]), None)
+                        victim = live_victim(history, c["id"],
+                                             lambda i: find_node(sock_path, i))
                         time.sleep(0.4)
                         node = find_node(sock_path, c["id"])
                         leaf = focused_leaf_id(sock_path)
@@ -141,17 +197,29 @@ def main():
                             "mapped=", node is not None and node.get("window"))
                         if node is not None and leaf is not None and contains(node, leaf):
                             try:
-                                pstart = None
-                                if node.get("window"):
+                                if is_automation_window(node):
+                                    log("autom-skip", c["id"])
+                                else:
+                                    origin = None
                                     try:
-                                        pstart = proc_start_epoch(pid_of_window(node["window"]))
+                                        if node.get("window"):
+                                            new_pid = pid_of_window(node["window"])
+                                            pmap = pid_workspace_map(
+                                                sock_path,
+                                                exclude_con_id=c["id"])
+                                            origin = resolve_origin(new_pid, pmap)
+                                            log("dbg-origin", c["id"], "pid=",
+                                                new_pid, "origin=", origin,
+                                                "cur=", cur_ws,
+                                                "map=", pmap)
                                     except Exception as e:
                                         log("nopid", c["id"], e)
-                                if pstart and pstart < switch_time and cur_ws != prev_ws:
-                                    run(sock_path, '[con_id=%s] move to workspace "%s"'
-                                        % (c["id"], prev_ws))
-                                    log("moveback", c["id"], "to", prev_ws)
-                                if victim is not None and victim != leaf:
+                                    if origin and origin != cur_ws:
+                                        run(sock_path, '[con_id=%s] move to workspace "%s"'
+                                            % (c["id"], origin))
+                                        log("moveback", c["id"], "to", origin)
+                                if (victim is not None and victim != leaf
+                                        and find_node(sock_path, victim) is not None):
                                     run(sock_path, '[con_id=%s] focus' % victim)
                                     log("refocus", leaf, "->", victim)
                             except Exception as e:
