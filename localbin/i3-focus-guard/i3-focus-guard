@@ -104,6 +104,46 @@ def live_victim(history, new_id, find_fn):
     return None
 
 
+def stack_victim_from_tree(tree, new_id, ws_name):
+    """Previously focused window on ws_name via i3 focus stacks (pure half)."""
+    by_id, stack = {}, [tree]
+    while stack:
+        n = stack.pop()
+        by_id[n["id"]] = n
+        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
+
+    def window_below(fid):
+        n = by_id.get(fid)
+        while n is not None and (not n.get("window") or n["id"] == new_id):
+            kids = [k for k in n.get("focus", []) if k != new_id]
+            if not kids:
+                return None
+            n = by_id.get(kids[0])
+        return n["id"] if n is not None else None
+
+    for n in by_id.values():
+        if n.get("type") == "workspace" and n.get("name") == ws_name:
+            for fid in n.get("focus", []):
+                v = window_below(fid)
+                if v is not None:
+                    return v
+    return None
+
+
+def stack_victim(sock_path, new_id, ws_name):
+    """Previously focused window on ws_name via i3 focus stacks.
+
+    Event history goes stale whenever the subscribe stream drops; the
+    workspace focus list is read fresh, so it survives those gaps. Falls
+    back to None (caller tries history next).
+    """
+    try:
+        tree = json.loads(run(sock_path, msgtype="get_tree"))
+    except Exception:
+        return None
+    return stack_victim_from_tree(tree, new_id, ws_name)
+
+
 def find_node(sock_path, con_id):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     stack = [tree]
@@ -156,7 +196,7 @@ def main():
     ws = json.loads(run(sock_path, msgtype="get_workspaces"))
     cur_ws = next(w["name"] for w in ws if w["focused"])
     last_manual = 0.0
-    history = []  # recent focused ids; victim = newest entry that isn't the new window
+    history = []  # fallback focus trail; primary victim comes from focus stacks
     boot_focused = focused_leaf_id(sock_path)
     if boot_focused is not None:
         history.append(boot_focused)
@@ -167,6 +207,12 @@ def main():
                 ["i3-msg", "-s", sock_path, "-t", "subscribe",
                  '["window","workspace","binding"]'],
                 stdout=subprocess.PIPE, text=True, bufsize=1)
+            try:  # subscribe streams die silently; resync so origin
+                # resolution never acts on a stale focused workspace
+                ws = json.loads(run(sock_path, msgtype="get_workspaces"))
+                cur_ws = next(w["name"] for w in ws if w["focused"])
+            except Exception as e:
+                log("wsresync", e)
             for line in p.stdout:
                 try:
                     ev = json.loads(line)
@@ -188,14 +234,15 @@ def main():
                             history.append(c["id"])
                             del history[:-20]
                     elif ev.get("change") == "new" and now - last_manual > MANUAL_GRACE_SEC:
-                        victim = live_victim(history, c["id"],
-                                             lambda i: find_node(sock_path, i))
                         time.sleep(0.4)
                         node = find_node(sock_path, c["id"])
                         leaf = focused_leaf_id(sock_path)
-                        log("new", c["id"], "victim=", victim, "leaf=", leaf,
+                        log("new", c["id"], "leaf=", leaf,
                             "mapped=", node is not None and node.get("window"))
                         if node is not None and leaf is not None and contains(node, leaf):
+                            victim = (stack_victim(sock_path, c["id"], cur_ws)
+                                      or live_victim(history, c["id"],
+                                                     lambda i: find_node(sock_path, i)))
                             try:
                                 if is_automation_window(node):
                                     log("autom-skip", c["id"])
@@ -204,14 +251,11 @@ def main():
                                     try:
                                         if node.get("window"):
                                             new_pid = pid_of_window(node["window"])
-                                            pmap = pid_workspace_map(
-                                                sock_path,
-                                                exclude_con_id=c["id"])
-                                            origin = resolve_origin(new_pid, pmap)
-                                            log("dbg-origin", c["id"], "pid=",
-                                                new_pid, "origin=", origin,
-                                                "cur=", cur_ws,
-                                                "map=", pmap)
+                                            origin = resolve_origin(
+                                                new_pid,
+                                                pid_workspace_map(
+                                                    sock_path,
+                                                    exclude_con_id=c["id"]))
                                     except Exception as e:
                                         log("nopid", c["id"], e)
                                     if origin and origin != cur_ws:
@@ -225,9 +269,10 @@ def main():
                             except Exception as e:
                                 log("err", e)
             p.wait()
+            log("resub")  # subscribe stream ended; reconnecting
         except Exception as e:
             log("reconnect", e)
-        time.sleep(2)
+        time.sleep(1)
 
 
 if __name__ == "__main__":
