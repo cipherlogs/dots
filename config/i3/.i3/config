@@ -81,11 +81,12 @@ bindsym $mod+Shift+Print --release exec --no-startup-id i3-scrot -s
 # bindsym $mod+Shift+h exec xdg-open /usr/share/doc/manjaro/i3_help.pdf
 bindsym $mod+Ctrl+x --release exec --no-startup-id xkill
 
-# focus_follows_mouse no
+# Focus stays where you type; mouse never yanks it.
+focus_follows_mouse no
+mouse_warping none
 
-# Never steal typing focus: background/script windows neither focus nor mark.
-# shortcut: no urgency hints either; use `urgent` instead if you want a flag on background popups.
-focus_on_window_activation none
+# Background activations mark urgent, never steal focus. New windows handled by no_focus below.
+focus_on_window_activation smart
 
 # change focus
 bindsym $mod2+h focus left
@@ -250,6 +251,16 @@ no_focus [class="^SyntheflowFortress$"]
 # syntheflow-chromiumfish-focus-guard-v1
 assign [class="^SyntheflowChromiumFish$"] workspace number 10
 no_focus [class="^SyntheflowChromiumFish$"]
+
+# System-wide browsers: tile in background, never steal vim focus.
+# Self-launched also needs one manual focus.
+no_focus [class="(?i)^Google-chrome$"]
+no_focus [class="(?i)^Chromium$"]
+no_focus [class="(?i)^Firefox$"]
+no_focus [class="(?i)^Brave-browser$"]
+no_focus [class="(?i)^Pale moon$"]
+no_focus [class="(?i)^qutebrowser$"]
+no_focus [class="(?i)^Microsoft-edge$"]
 
 # reload the configuration file
 bindsym $mod+Shift+c reload
