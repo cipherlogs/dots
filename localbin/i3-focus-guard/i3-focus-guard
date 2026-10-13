@@ -26,6 +26,13 @@ import time
 PIDFILE = "/tmp/i3-focus-guard.pid"
 LOG = "/tmp/i3-focus-guard.log"
 HOLD_WS = "20"
+STATE_DIR = os.path.join(
+    os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
+    "i3-focus-guard")
+JOURNAL_FILE = os.path.join(STATE_DIR, "ws.json")
+JOURNAL_TRUST_SECS = 24 * 3600
+JOURNAL_PRUNE_SECS = 7 * 24 * 3600
+SWEEP_SECS = 30
 
 
 def is_held_ws(name):
@@ -73,6 +80,96 @@ def workspace_name(tree, con_id):
         (ws["name"] for n, ws in walk(tree)
          if n.get("id") == con_id and ws is not None),
         None)
+
+
+def load_journal():
+    """Last-known xid -> [workspace, class, epoch]; {} when absent."""
+    try:
+        with open(JOURNAL_FILE) as f:
+            data = json.load(f)
+        return {str(k): v for k, v in data.items() if isinstance(v, list)}
+    except Exception:
+        return {}
+
+
+def save_journal(journal):
+    if journal is None:
+        return
+    try:
+        os.makedirs(STATE_DIR, exist_ok=True)
+        with open(JOURNAL_FILE, "w") as f:
+            json.dump(journal, f)
+    except Exception as e:
+        log("journal-err", e)
+
+
+def refresh_journal(tree, journal, now=None):
+    """Record homes for visible windows; pen/scratchpad never recorded."""
+    if journal is None or tree is None:
+        return journal
+    now = now if now is not None else time.time()
+    for n, ws in walk(tree):
+        if n.get("window") and ws is not None and not is_held_ws(ws["name"]):
+            wp = n.get("window_properties") or {}
+            journal[str(n["window"])] = [ws["name"], wp.get("class") or "", now]
+    for k in [k for k, v in journal.items()
+              if not isinstance(v, list) or len(v) < 3
+              or now - v[2] > JOURNAL_PRUNE_SECS]:
+        del journal[k]
+    save_journal(journal)
+    return journal
+
+
+def journal_home(journal, xid, cls, now=None):
+    """Journaled home ws for xid, or None.
+
+    xid survives i3 restart (con_id does not), but X recycles xids, so a
+    same-class entry younger than a day is required before trusting it.
+    """
+    now = now if now is not None else time.time()
+    try:
+        ws_name, jcls, ts = (journal or {}).get(str(xid), (None, None, None))
+    except Exception:
+        return None
+    if (ws_name and jcls == (cls or "") and not is_held_ws(ws_name)
+            and isinstance(ts, (int, float)) and now - ts < JOURNAL_TRUST_SECS):
+        return ws_name
+    return None
+
+
+def record_home(journal, node, ws_name):
+    """Remember where a delivered window lives (non-dialogs only)."""
+    if (journal is None or not node or not node.get("window")
+            or not ws_name or is_held_ws(ws_name)):
+        return
+    wp = node.get("window_properties") or {}
+    journal[str(node["window"])] = [ws_name, wp.get("class") or "", time.time()]
+    save_journal(journal)
+
+
+def choose_target(origin, home, new_ws):
+    """Delivery preference: ancestry origin, then last-known home, then target."""
+    if origin:
+        return origin
+    if home and not is_held_ws(home):
+        return home
+    return new_ws
+
+
+def _selfcheck():
+    assert choose_target("2", "3", "1") == "2"
+    assert choose_target(None, "3", "1") == "3"
+    assert choose_target(None, None, "1") == "1"
+    assert choose_target(None, "20", "1") == "1"
+    j = {"7": ["2", "Alacritty", time.time()]}
+    assert journal_home(j, 7, "Alacritty") == "2"
+    assert journal_home(j, 7, "Chrome") is None
+    assert journal_home({"7": ["2", "Alacritty", 0]}, 7, "Alacritty") is None
+    assert journal_home({}, 7, "Alacritty") is None
+
+
+if os.environ.get("I3FG_SELFCHECK"):
+    _selfcheck()
 
 
 def ppid_of(pid):
@@ -306,6 +403,7 @@ def open_events(sock_path):
     if not (ack or {}).get("success"):
         s.close()
         raise RuntimeError("subscribe rejected: %r" % (ack,))
+    s.settimeout(SWEEP_SECS)  # idle gaps double as pen-sweep ticks
     return s
 
 
@@ -335,7 +433,8 @@ def tree_windows(tree):
                for n, _ in walk(tree) if n.get("window"))
 
 
-def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
+def handle_new(sock_path, con_id, cur_ws, history, journal=None,
+               stage=True, ev_props=None):
     """Deliver a birth from the holding pen, then refocus + urgency.
 
     Rule-held births skip staging (already invisible); births found
@@ -407,6 +506,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
             ensure_floating(sock_path, con_id)
         else:
             ensure_tiled(sock_path, con_id)
+            record_home(journal, node, new_ws)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
@@ -444,10 +544,25 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                     log("dialog-moveback" if dialog else "moveback",
                         con_id, "to", origin)
                 elif held:
-                    shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
+                    home = None
+                    if not dialog:
+                        wp = node.get("window_properties") or {}
+                        home = journal_home(journal, node.get("window"),
+                                            wp.get("class") or "")
+                    target = new_ws if dialog else choose_target(origin, home,
+                                                                 new_ws)
+                    shown = deliver_to(sock_path, con_id, target, cur_ws,
+                                       staged)
                     settle(sock_path, con_id)
-                    log("dialog-unstage" if dialog else "unstage",
-                        con_id, "to", new_ws)
+                    final_ws = target
+                    # shortcut: recycled-xid homes are trusted only via
+                    # journal_home (same class, <1 day); upgrade when to
+                    # per-launch tokens if that ever misdelivers.
+                    if home is not None and target == home and target != new_ws:
+                        log("home", con_id, "to", target)
+                    else:
+                        log("dialog-unstage" if dialog else "unstage",
+                            con_id, "to", target)
                 elif dialog:
                     settle(sock_path, con_id)
                     log("dialog-float", con_id, "on", new_ws)
@@ -480,9 +595,52 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                     # window is unfocused (set while focused
                     # is cleared)
                     set_urgent(node["window"])
+                if not dialog:
+                    record_home(journal, node, final_ws)
         except Exception as e:
             log("err", e)
     return node
+
+
+def reconcile(sock_path, cur_ws, history, journal, known):
+    """Resync focused ws, refresh journal, deliver gap births + pen inbox.
+
+    Returns (cur_ws, known-pairs). Diffs on con_id: XID swaps on a known
+    window are re-maps, never births.
+    """
+    try:  # resync so origin resolution never acts on a stale
+        # focused workspace, then reconcile windows mapped
+        # while unsubscribed
+        ws = json.loads(run(sock_path, msgtype="get_workspaces"))
+        cur_ws = next(w["name"] for w in ws if w["focused"])
+    except Exception as e:
+        log("wsresync", e)
+    try:
+        tree = json.loads(run(sock_path, msgtype="get_tree"))
+    except Exception as e:
+        log("resync", e)
+        tree = None
+    if tree is None:
+        return cur_ws, known
+    refresh_journal(tree, journal)
+    cur = tree_windows(tree)
+    known_cons = set(c for c, _ in known)
+    for con_id, _xid in sorted(cur):
+        if con_id not in known_cons:
+            handle_new(sock_path, con_id, cur_ws, history, journal, stage=False)
+    # Inbox drain: i3 restart re-applies the holding-pen rule to
+    # every window and daemon restarts inherit the backlog; those
+    # carry known ids so the diff above misses them. Fresh births
+    # (unknown ids) are left to their own events.
+    fresh_ids = set(c for c, _ in cur) - set(c for c, _ in known)
+    for n, ws in walk(tree):
+        if (n.get("window") and ws is not None
+                and ws.get("name") == HOLD_WS
+                and n["id"] in set(c for c, _ in known)
+                and n["id"] not in fresh_ids):
+            handle_new(sock_path, n["id"], cur_ws, history, journal,
+                       stage=False)
+    return cur_ws, set(cur)
 
 
 def main():
@@ -505,49 +663,28 @@ def main():
     boot_focused = focused_leaf_id(sock_path)
     if boot_focused is not None:
         history.append(boot_focused)
+    journal = load_journal()
     try:  # baseline so pre-existing windows are never treated as new
-        known = tree_windows(json.loads(run(sock_path, msgtype="get_tree")))
+        boot_tree = json.loads(run(sock_path, msgtype="get_tree"))
+        known = tree_windows(boot_tree)
+        refresh_journal(boot_tree, journal)
     except Exception:
         known = set()
     log("ready, ws=%s" % cur_ws)
     while True:
         try:
             ev_sock = open_events(sock_path)
-            try:  # resync so origin resolution never acts on a stale
-                # focused workspace, then reconcile windows mapped
-                # while unsubscribed
-                ws = json.loads(run(sock_path, msgtype="get_workspaces"))
-                cur_ws = next(w["name"] for w in ws if w["focused"])
-            except Exception as e:
-                log("wsresync", e)
-            try:
-                resync_tree = json.loads(run(sock_path, msgtype="get_tree"))
-            except Exception as e:
-                log("resync", e)
-                resync_tree = None
-            if resync_tree is None:
-                cur = set()
-            else:
-                cur = tree_windows(resync_tree)
-            for con_id, _xid in sorted(cur - known):
-                handle_new(sock_path, con_id, cur_ws, history, stage=False)
-            if resync_tree is not None:
-                # Inbox drain: i3 restart re-applies the holding-pen rule to
-                # every window and daemon restarts inherit the backlog; those
-                # carry known ids so the diff above misses them. Fresh births
-                # (unknown ids) are left to their own events.
-                known_ids = set(c for c, _ in known)
-                fresh_ids = set(c for c, _ in cur - known)
-                for n, ws in walk(resync_tree):
-                    if (n.get("window") and ws is not None
-                            and ws.get("name") == HOLD_WS
-                            and n["id"] in known_ids
-                            and n["id"] not in fresh_ids):
-                        handle_new(sock_path, n["id"], cur_ws, history,
-                                   stage=False)
-            known = set(cur)
+            cur_ws, known = reconcile(sock_path, cur_ws, history, journal,
+                                      known)
             while True:
-                _typ, ev = read_msg(ev_sock)
+                try:
+                    _typ, ev = read_msg(ev_sock)
+                except socket.timeout:
+                    # Idle sweep: strays parked on the pen by a rule
+                    # re-fire (reload/restart) drain home within seconds.
+                    cur_ws, known = reconcile(sock_path, cur_ws, history,
+                                              journal, known)
+                    continue
                 if ev is None:
                     break  # clean EOF; resubscribe below
                 if "current" in ev:
@@ -559,9 +696,36 @@ def main():
                         if not history or history[-1] != c["id"]:
                             history.append(c["id"])
                             del history[:-20]
+                    elif ev.get("change") == "move":
+                        # Rule re-fires (bindsym reload/restart) park known
+                        # windows on the pen with no window::new; drain them
+                        # home at once instead of waiting for the sweep.
+                        mid = (c or {}).get("id")
+                        if (mid is not None
+                                and any(k == mid for k, _ in known)):
+                            try:
+                                mtree = json.loads(
+                                    run(sock_path, msgtype="get_tree"))
+                            except Exception:
+                                mtree = None
+                            if (mtree is not None
+                                    and workspace_name(mtree, mid) == HOLD_WS):
+                                log("move-pen", mid)
+                                mnode = handle_new(
+                                    sock_path, mid, cur_ws, history, journal,
+                                    stage=False)
+                                known.add((mid, mnode.get("window")
+                                           if mnode else None))
                     elif ev.get("change") == "new":
+                        # shortcut: con_ids are monotonic per session and
+                        # rebuilt on restart, so a known con is a re-managed
+                        # window, never a birth; staging it would hide it.
+                        if any(k == c["id"] for k, _ in known):
+                            log("known-skip", c["id"])
+                            continue
                         node = handle_new(sock_path, c["id"], cur_ws, history,
-                                            ev_props=c.get("window_properties"))
+                                          journal,
+                                          ev_props=c.get("window_properties"))
                         known.add((c["id"], node.get("window") if node else None))
             try:
                 ev_sock.close()
