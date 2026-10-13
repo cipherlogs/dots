@@ -283,6 +283,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         if staged:
             run(sock_path, '[con_id=%s] move to workspace "%s"'
                 % (con_id, new_ws))
+            run(sock_path, '[con_id=%s] floating disable' % con_id)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
@@ -292,6 +293,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 if staged:
                     run(sock_path, '[con_id=%s] move to workspace "10"'
                         % con_id)
+                    run(sock_path, '[con_id=%s] floating disable' % con_id)
                     log("autom-rescue", con_id)
                 else:
                     log("autom-skip", con_id)
@@ -310,10 +312,12 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 if origin and origin != new_ws:
                     run(sock_path, '[con_id=%s] move to workspace "%s"'
                         % (con_id, origin))
+                    run(sock_path, '[con_id=%s] floating disable' % con_id)
                     log("moveback", con_id, "to", origin)
                 elif staged:
                     run(sock_path, '[con_id=%s] move to workspace "%s"'
                         % (con_id, new_ws))
+                    run(sock_path, '[con_id=%s] floating disable' % con_id)
                     log("unstage", con_id, "to", new_ws)
                 else:
                     log("fallback", con_id, "urgency-only")
