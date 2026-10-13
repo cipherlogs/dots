@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 """i3-focus-guard: workspaces stay isolated.
 
-Policy: only windows mapped within MANUAL_GRACE_SEC of a manual keybinding
-exec take focus naturally. Any other newly-mapped window that grabs focus
-gets focus taken back, and if its process ancestry reaches a visible window
-it is moved back to that ancestor workspace (origin). No windowed ancestor:
-leave placement, urgency-hint only. First window on an empty workspace stays
-focused per window-manager design.
+Policy: every newly-mapped window gets origin handling. If its process
+ancestry reaches a visible window it is moved back to that ancestor
+workspace (origin); otherwise leave placement, urgency-hint only. The
+newcomer's focus is always taken back (prior focus restored), so even a
+self-launched window on the current workspace needs one explicit click.
+First window on an empty workspace stays focused per window-manager design.
+
+Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
 shortcut: commands typed by hand in a terminal count as background (click once to focus).
 """
@@ -15,7 +17,6 @@ import os
 import subprocess
 import time
 
-MANUAL_GRACE_SEC = 5.0
 PIDFILE = "/tmp/i3-focus-guard.pid"
 LOG = "/tmp/i3-focus-guard.log"
 
@@ -34,6 +35,32 @@ def run(sock_path, payload=None, msgtype="command"):
     if payload is not None:
         cmd.append(payload)
     return subprocess.check_output(cmd).decode()
+
+
+def walk(node, _ws=None):
+    """Depth-first (node, enclosing-workspace) pairs, tiling + floating."""
+    if node.get("type") == "workspace":
+        _ws = node
+    yield node, _ws
+    for c in node.get("nodes", []) + node.get("floating_nodes", []):
+        yield from walk(c, _ws)
+
+
+def pid_is_guard(pid):
+    """True if pid's cmdline is the guard (rules out PID reuse)."""
+    try:
+        with open("/proc/%d/cmdline" % pid, "rb") as f:
+            return b"i3-focus-guard" in f.read()
+    except Exception:
+        return False
+
+
+def workspace_name(tree, con_id):
+    """Name of the workspace containing con_id, or None."""
+    return next(
+        (ws["name"] for n, ws in walk(tree)
+         if n.get("id") == con_id and ws is not None),
+        None)
 
 
 def ppid_of(pid):
@@ -69,22 +96,18 @@ def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
 def pid_workspace_map(sock_path, exclude_con_id=None):
     """Map owner pid -> workspace name for visible windows.
 
-    Visible = on a numbered workspace (num >= 0, not __i3_scratch).
+    Visible = on a real workspace (not __i3_scratch); named workspaces
+    count too, `move to workspace "<name>"` accepts names.
     """
     tree = json.loads(run(sock_path, msgtype="get_tree"))
-    pid_to_ws, stack = {}, [(tree, None, -1)]
-    while stack:
-        n, ws_name, ws_num = stack.pop()
-        if n.get("type") == "workspace":
-            ws_name, ws_num = n.get("name"), n.get("num", -1)
+    pid_to_ws = {}
+    for n, ws in walk(tree):
         if n.get("window") and n.get("id") != exclude_con_id:
-            if ws_name and not ws_name.startswith("__i3") and ws_num != -1:
+            if ws is not None and not ws["name"].startswith("__i3"):
                 try:
-                    pid_to_ws[pid_of_window(n["window"])] = ws_name
+                    pid_to_ws[pid_of_window(n["window"])] = ws["name"]
                 except Exception:
                     pass
-        for c in n.get("nodes", []) + n.get("floating_nodes", []):
-            stack.append((c, ws_name, ws_num))
     return pid_to_ws
 
 
@@ -108,11 +131,7 @@ def live_victim(history, new_id, find_fn):
 
 def stack_victim_from_tree(tree, new_id, ws_name):
     """Previously focused window on ws_name via i3 focus stacks (pure half)."""
-    by_id, stack = {}, [tree]
-    while stack:
-        n = stack.pop()
-        by_id[n["id"]] = n
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
+    by_id = dict((n["id"], n) for n, _ in walk(tree))
 
     def window_below(fid):
         n = by_id.get(fid)
@@ -148,13 +167,7 @@ def stack_victim(sock_path, new_id, ws_name):
 
 def find_node(sock_path, con_id):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
-    stack = [tree]
-    while stack:
-        n = stack.pop()
-        if n.get("id") == con_id:
-            return n
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
-    return None
+    return next((n for n, _ in walk(tree) if n.get("id") == con_id), None)
 
 
 def is_first_window_on_ws(tree, con_id):
@@ -163,23 +176,13 @@ def is_first_window_on_ws(tree, con_id):
     First windows stay focused per window-manager design; caller skips
     move, refocus, and urgency entirely in that case.
     """
-    ws_node = None
-    stack = [tree]
-    while stack:
-        n = stack.pop()
-        if n.get("type") == "workspace" and contains(n, con_id):
-            ws_node = n
-            break
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
+    ws_node = next(
+        (ws for n, ws in walk(tree) if n.get("id") == con_id and ws is not None),
+        None)
     if ws_node is None:
         return False
-    stack = [ws_node]
-    while stack:
-        n = stack.pop()
-        if n.get("window") and n.get("id") != con_id:
-            return False
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
-    return True
+    return not any(n.get("window") and n.get("id") != con_id
+                   for n, _ in walk(ws_node))
 
 
 def set_urgent(xid):
@@ -198,23 +201,12 @@ def set_urgent(xid):
 
 def focused_leaf_id(sock_path):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
-    found, stack = [], [tree]
-    while stack:
-        n = stack.pop()
-        if n.get("focused"):
-            found.append(n["id"])
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
+    found = [n["id"] for n, _ in walk(tree) if n.get("focused")]
     return found[-1] if found else None  # deepest focused container
 
 
 def contains(node, con_id):
-    stack = [node]
-    while stack:
-        n = stack.pop()
-        if n.get("id") == con_id:
-            return True
-        stack.extend(n.get("nodes", []) + n.get("floating_nodes", []))
-    return False
+    return any(n.get("id") == con_id for n, _ in walk(node))
 
 
 def pid_of_window(xid):
@@ -227,6 +219,8 @@ def main():
         with open(PIDFILE) as f:
             old = int(f.read().strip())
         os.kill(old, 0)
+        if not pid_is_guard(old):
+            raise ValueError("stale pidfile, pid %d reused" % old)
         print("i3-focus-guard already running as %d" % old)
         return
     except (OSError, ValueError, FileNotFoundError):
@@ -236,7 +230,6 @@ def main():
         f.write(str(os.getpid()))
     ws = json.loads(run(sock_path, msgtype="get_workspaces"))
     cur_ws = next(w["name"] for w in ws if w["focused"])
-    last_manual = 0.0
     history = []  # fallback focus trail; primary victim comes from focus stacks
     boot_focused = focused_leaf_id(sock_path)
     if boot_focused is not None:
@@ -246,7 +239,7 @@ def main():
         try:
             p = subprocess.Popen(
                 ["i3-msg", "-s", sock_path, "-t", "subscribe",
-                 '["window","workspace","binding"]'],
+                 '["window","workspace"]'],
                 stdout=subprocess.PIPE, text=True, bufsize=1)
             try:  # subscribe streams die silently; resync so origin
                 # resolution never acts on a stale focused workspace
@@ -259,13 +252,7 @@ def main():
                     ev = json.loads(line)
                 except ValueError:
                     continue
-                now = time.time()
-                if "binding" in ev:
-                    b = ev["binding"]
-                    if (ev.get("change") == "run" and b.get("input_type") == "keyboard"
-                            and "exec" in b.get("command", "")):
-                        last_manual = now
-                elif "current" in ev:
+                if "current" in ev:
                     if ev.get("change") == "focus":
                         cur_ws = ev["current"]["name"]
                 elif "container" in ev:
@@ -274,7 +261,7 @@ def main():
                         if not history or history[-1] != c["id"]:
                             history.append(c["id"])
                             del history[:-20]
-                    elif ev.get("change") == "new" and now - last_manual > MANUAL_GRACE_SEC:
+                    elif ev.get("change") == "new":
                         time.sleep(0.4)
                         node = find_node(sock_path, c["id"])
                         leaf = focused_leaf_id(sock_path)
@@ -289,7 +276,9 @@ def main():
                                     tree_now, c["id"]):
                                 log("firstwin", c["id"], "leave focused")
                             else:
-                                victim = (stack_victim(sock_path, c["id"], cur_ws)
+                                new_ws = (workspace_name(tree_now, c["id"])
+                                          or cur_ws)
+                                victim = (stack_victim(sock_path, c["id"], new_ws)
                                           or live_victim(history, c["id"],
                                                          lambda i: find_node(sock_path, i)))
                                 try:
@@ -307,7 +296,7 @@ def main():
                                                         exclude_con_id=c["id"]))
                                         except Exception as e:
                                             log("nopid", c["id"], e)
-                                        if origin and origin != cur_ws:
+                                        if origin and origin != new_ws:
                                             run(sock_path, '[con_id=%s] move to workspace "%s"'
                                                 % (c["id"], origin))
                                             log("moveback", c["id"], "to", origin)
