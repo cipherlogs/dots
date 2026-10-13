@@ -255,10 +255,16 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
     """
     if stage and not is_automation_window({"window_properties": ev_props}):
         try:
-            run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
+            reply = run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
             log("stage", con_id)
+            try:
+                ok = json.loads(reply)[0].get("success", False)
+            except Exception:
+                ok = False
+            log("hide-reply", con_id, "success" if ok else "failed")
         except Exception as e:
             log("stage-err", con_id, e)
+            log("hide-reply", con_id, "failed")
     time.sleep(0.4)
     node = find_node(sock_path, con_id)
     leaf = focused_leaf_id(sock_path)
