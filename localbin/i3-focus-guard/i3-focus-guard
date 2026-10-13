@@ -1,16 +1,18 @@
 #!/usr/bin/env python3
 """i3-focus-guard: workspaces stay isolated.
 
-Policy: the manager diverts every birth to holding workspace 20 pre-map;
-the daemon moves each arrival exactly once to its origin workspace (or
-back where i3 targeted it, automation pins to ws10) with prior focus
-restored and an urgency hint, never taking focus. Background arrivals
-never tile the visible layout, even briefly. Births found outside the
-holding pen are staged to the scratchpad as fallback.
+Policy: the manager diverts every tiling birth to holding workspace 20
+pre-map; the daemon moves each arrival exactly once to its origin
+workspace (or back where i3 targeted it, automation pins to ws10).
+Same-workspace arrivals take focus; background arrivals keep prior focus
+restored with an urgency hint, never taking focus. Floating dialogs bypass
+the pen and map directly. Background arrivals never tile the visible
+layout, even briefly. Births found outside the holding pen are staged to
+the scratchpad as fallback.
 
 Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
-shortcut: commands typed by hand in a terminal count as background (click once to focus).
+shortcut: background-parent dialogs land on the focused workspace as-is.
 """
 import json
 import os
@@ -365,6 +367,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                   or live_victim(history, con_id,
                                  lambda i: find_node(sock_path, i)))
         shown = False
+        final_ws = new_ws
         try:
             if is_automation_window(node):
                 autom_ws = (workspace_name(tree_now, con_id)
@@ -390,6 +393,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 if origin and origin != new_ws:
                     shown = deliver_to(sock_path, con_id, origin, cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
+                    final_ws = origin
                     log("moveback", con_id, "to", origin)
                 elif held:
                     shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
@@ -398,20 +402,32 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 else:
                     ensure_tiled(sock_path, con_id)
                     log("fallback", con_id, "urgency-only on", new_ws)
-            # Gap births can sit off the focused workspace; focusing there
-            # would switch desktops, so refocus stays on the focused one.
-            # Scratchpad-show deliveries steal focus even when the victim is
-            # the pre-birth leaf, so those always refocus.
-            if (victim is not None and (shown or victim != leaf)
-                    and new_ws == cur_ws
-                    and find_node(sock_path, victim) is not None):
-                run(sock_path, '[con_id=%s] focus' % victim)
-                log("refocus", leaf, "->", victim)
-            if node.get("window"):
-                # last: the hint sticks only once the
-                # window is unfocused (set while focused
-                # is cleared)
-                set_urgent(node["window"])
+            # Fresh focus: the user may have switched workspaces during the
+            # settle delay, so autofocus compares against now, not birth time.
+            try:
+                _ws = json.loads(run(sock_path, msgtype="get_workspaces"))
+                cur_now = next(w["name"] for w in _ws if w["focused"])
+            except Exception:
+                cur_now = cur_ws
+            if (final_ws == cur_now and not is_automation_window(node)
+                    and node.get("window")):
+                run(sock_path, '[con_id=%s] focus' % con_id)
+                log("autofocus", con_id, "on", final_ws)
+            else:
+                # Gap births can sit off the focused workspace; focusing there
+                # would switch desktops, so refocus stays on the focused one.
+                # Scratchpad-show deliveries steal focus even when the victim is
+                # the pre-birth leaf, so those always refocus.
+                if (victim is not None and (shown or victim != leaf)
+                        and new_ws == cur_now
+                        and find_node(sock_path, victim) is not None):
+                    run(sock_path, '[con_id=%s] focus' % victim)
+                    log("refocus", leaf, "->", victim)
+                if node.get("window"):
+                    # last: the hint sticks only once the
+                    # window is unfocused (set while focused
+                    # is cleared)
+                    set_urgent(node["window"])
         except Exception as e:
             log("err", e)
     return node
