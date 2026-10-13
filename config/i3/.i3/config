@@ -177,6 +177,8 @@ bindsym $mod+5 workspace $ws5
 bindsym $mod+6 workspace $ws6
 bindsym $mod+7 workspace $ws7
 bindsym $mod+8 workspace $ws8
+# Emergency peephole into holding pen (ws20); never keep windows there.
+bindsym $mod+0 workspace --no-auto-back-and-forth number 20
 
 # Move focused container to workspace
 bindsym $mod+Ctrl+1 move container to workspace $ws1
