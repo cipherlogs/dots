@@ -12,7 +12,9 @@ the scratchpad as fallback.
 
 Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
-shortcut: background-parent dialogs land on the focused workspace as-is.
+Dialog-like windows float as intended; background ones rejoin their
+parent workspace instead of staying where focused.
+shortcut: background dialog landing on an empty focused workspace stays put.
 """
 import json
 import os
@@ -152,6 +154,33 @@ def is_automation_window(node):
     return False
 
 
+DIALOG_TYPES = {"dialog", "utility", "toolbar", "splash", "menu",
+                "dropdown_menu", "popup_menu", "notification"}
+DIALOG_ROLES = {"pop-up", "task_dialog"}
+
+
+def is_dialog_props(props):
+    """True for dialog-like windows; they float as intended, never tile."""
+    props = props or {}
+    return ((props.get("window_type") or "") in DIALOG_TYPES
+            or (props.get("window_role") or "") in DIALOG_ROLES
+            or bool(props.get("transient_for")))
+
+
+def is_dialog_node(node):
+    """True for dialog-like or already-floating windows (field-layout safe).
+
+    get_tree field placement varies; the floating-state check covers any
+    dialog the manager already floated via the config rules above.
+    """
+    node = node or {}
+    if is_dialog_props(node.get("window_properties")):
+        return True
+    if (node.get("window_type") or "") in DIALOG_TYPES:
+        return True
+    return (node.get("floating") or "").endswith("_on")
+
+
 def live_victim(history, new_id, find_fn):
     """Newest history entry that isn't the new window and still exists."""
     for h in reversed(history):
@@ -225,6 +254,11 @@ def set_urgent(xid):
 def ensure_tiled(sock_path, con_id):
     """Floating off so delivered arrivals tile; scratchpad float never leaks."""
     run(sock_path, '[con_id=%s] floating disable' % con_id)
+
+
+def ensure_floating(sock_path, con_id):
+    """Floating on so dialog-like arrivals float as intended."""
+    run(sock_path, '[con_id=%s] floating enable' % con_id)
 
 
 def deliver_to(sock_path, con_id, target_ws, cur_ws, staged):
@@ -313,10 +347,17 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         pre_tree = None
     pre_ws = workspace_name(pre_tree, con_id) if pre_tree is not None else None
     held_on_arrival = is_held_ws(pre_ws)
+    pre_node = next(
+        (n for n, _ in walk(pre_tree) if n.get("id") == con_id),
+        None) if pre_tree is not None else None
+    pre_floating = ((pre_node or {}).get("floating") or "").endswith("_on")
     if stage and held_on_arrival:
         log("pen", con_id)
-    if (stage and not held_on_arrival
-            and not is_automation_window({"window_properties": ev_props})):
+    if pre_floating:
+        log("float-skip", con_id)
+    if (stage and not held_on_arrival and not pre_floating
+            and not is_automation_window({"window_properties": ev_props})
+            and not is_dialog_props(ev_props)):
         try:
             reply = run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
             log("stage", con_id)
@@ -335,6 +376,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         "mapped=", node is not None and node.get("window"))
     if node is None or leaf is None:
         return node
+    dialog = is_dialog_node(node)
     try:
         tree_now = json.loads(run(sock_path, msgtype="get_tree"))
     except Exception:
@@ -359,9 +401,12 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         # window focus. Drain-held recoveries (held, stage=False) fall
         # through to origin sort so restart preserves layout sessions.
         log("firstwin", con_id, "to", new_ws, "leave focused")
-        if held:
+        if held and not dialog:
             deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
-        ensure_tiled(sock_path, con_id)
+        if dialog:
+            ensure_floating(sock_path, con_id)
+        else:
+            ensure_tiled(sock_path, con_id)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
@@ -369,7 +414,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         shown = False
         final_ws = new_ws
         try:
-            if is_automation_window(node):
+            if is_automation_window(node) and not dialog:
                 autom_ws = (workspace_name(tree_now, con_id)
                             if tree_now is not None else None)
                 if not staged and autom_ws == "10":
@@ -391,17 +436,23 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                             origin = resolve_origin(new_pid, pid_ws)
                 except Exception as e:
                     log("nopid", con_id, e)
+                settle = ensure_floating if dialog else ensure_tiled
                 if origin and origin != new_ws:
                     shown = deliver_to(sock_path, con_id, origin, cur_ws, staged)
-                    ensure_tiled(sock_path, con_id)
+                    settle(sock_path, con_id)
                     final_ws = origin
-                    log("moveback", con_id, "to", origin)
+                    log("dialog-moveback" if dialog else "moveback",
+                        con_id, "to", origin)
                 elif held:
                     shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
-                    ensure_tiled(sock_path, con_id)
-                    log("unstage", con_id, "to", new_ws)
+                    settle(sock_path, con_id)
+                    log("dialog-unstage" if dialog else "unstage",
+                        con_id, "to", new_ws)
+                elif dialog:
+                    settle(sock_path, con_id)
+                    log("dialog-float", con_id, "on", new_ws)
                 else:
-                    ensure_tiled(sock_path, con_id)
+                    settle(sock_path, con_id)
                     log("fallback", con_id, "urgency-only on", new_ws)
             # Fresh focus: the user may have switched workspaces during the
             # settle delay, so autofocus compares against now, not birth time.

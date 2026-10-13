@@ -236,13 +236,27 @@ for_window [class="Xfburn"] floating enable
 # Holding pen: every tiling birth is managed here pre-map so background
 # arrivals never tile the focused workspace, not even for a frame.
 # Floating windows (dialogs, pickers, popups) are exempt: they never tile,
-# so they map straight onto the focused workspace with no sorter delay.
+# so they map straight onto the focused workspace with no sorter delay;
+# the guard then reunites background ones with their parent workspace.
 # i3-focus-guard sorts each arrival to its origin or target workspace. Reload-safe
 # (proven in a scratch session); i3 restart re-applies this to all windows
 # and the guard drains the pen on resubscribe. Automation pins land here
 # too and are rescued to workspace 10 (this rule wins over assign).
 # Reserved: never keep windows on ws20 yourself, the guard sorts anything
 # found there.
+# Dialog-like windows float as intended; must precede the tiling diversion below.
+# (window_type takes one enum value per rule; alternation is rejected.)
+for_window [window_type="dialog"] floating enable
+for_window [window_type="utility"] floating enable
+for_window [window_type="toolbar"] floating enable
+for_window [window_type="splash"] floating enable
+for_window [window_type="menu"] floating enable
+for_window [window_type="dropdown_menu"] floating enable
+for_window [window_type="popup_menu"] floating enable
+for_window [window_type="notification"] floating enable
+for_window [window_role="pop-up|task_dialog"] floating enable
+# ABDM task windows carry no dialog markers (NORMAL, no transient/role); float by title.
+for_window [class="com-abdownloadmanager-desktop-AppKt" title="Add Download"] floating enable
 for_window [tiling] move to workspace number 20
 
 # Keep physical-display traffic windows on a reserved background workspace without
