@@ -301,7 +301,10 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         tree_now = None
     staged = (tree_now is not None
               and (workspace_name(tree_now, con_id) or "").startswith("__i3"))
-    if not staged and not contains(node, leaf):
+    # Gap births (stage=False) skip staging, so a quiet one never contains
+    # focus yet still needs move+refocus+badge below; only the live path
+    # may bail here.
+    if stage and not staged and not contains(node, leaf):
         return node
     # i3 targets the focused workspace; staging hides where it would land
     new_ws = cur_ws
@@ -350,7 +353,10 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                     log("unstage", con_id, "to", new_ws)
                 else:
                     log("fallback", con_id, "urgency-only")
+            # Gap births can sit off the focused workspace; focusing there
+            # would switch desktops, so refocus stays on the focused one.
             if (victim is not None and victim != leaf
+                    and new_ws == cur_ws
                     and find_node(sock_path, victim) is not None):
                 run(sock_path, '[con_id=%s] focus' % victim)
                 log("refocus", leaf, "->", victim)
