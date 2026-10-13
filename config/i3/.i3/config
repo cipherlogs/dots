@@ -83,6 +83,10 @@ bindsym $mod+Ctrl+x --release exec --no-startup-id xkill
 
 # focus_follows_mouse no
 
+# Never steal typing focus: background/script windows neither focus nor mark.
+# shortcut: no urgency hints either; use `urgent` instead if you want a flag on background popups.
+focus_on_window_activation none
+
 # change focus
 bindsym $mod2+h focus left
 bindsym $mod2+j focus down
@@ -246,7 +250,6 @@ no_focus [class="^SyntheflowFortress$"]
 # syntheflow-chromiumfish-focus-guard-v1
 assign [class="^SyntheflowChromiumFish$"] workspace number 10
 no_focus [class="^SyntheflowChromiumFish$"]
-for_window [urgent=latest class="^(?!(SyntheflowNativeFirefox|SyntheflowPatchright|SyntheflowCamoufox|SyntheflowClearcote|SyntheflowFortress|SyntheflowChromiumFish)$).*$"] focus
 
 # reload the configuration file
 bindsym $mod+Shift+c reload
@@ -305,6 +308,7 @@ mode "resize" {
 exec --no-startup-id /usr/lib/polkit-gnome/polkit-gnome-authentication-agent-1
 exec --no-startup-id alacritty
 exec --no-startup-id unclutter
+exec --no-startup-id ~/.local/bin/i3-focus-guard
 # exec --no-startup-id nitrogen --restore; sleep 1; picom -b
 #exec --no-startup-id manjaro-hello
 exec --no-startup-id nm-applet
