@@ -94,6 +94,29 @@ def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
     return None
 
 
+def family_workspace(new_pid, pid_to_ws, ppid_fn=None):
+    """Workspace owned unanimously by new_pid's process family, or None.
+
+    Family is new_pid plus OS ancestors; self is included so a
+    pid-reusing single-process dialog matches its own browser windows.
+    Exactly one distinct workspace wins without consulting ancestry;
+    split or windowless families return None (caller falls back).
+    """
+    getppid = ppid_fn or ppid_of
+    lineage, pid, depth = {new_pid}, new_pid, 0
+    while depth < 32:
+        try:
+            pid = getppid(pid)
+        except Exception:
+            break
+        if pid in (0, 1) or pid in lineage:
+            break
+        lineage.add(pid)
+        depth += 1
+    found = set(ws for q, ws in pid_to_ws.items() if q in lineage)
+    return found.pop() if len(found) == 1 else None
+
+
 def pid_workspace_map(sock_path, exclude_con_id=None):
     """Map owner pid -> workspace name for visible windows.
 
@@ -308,11 +331,11 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                 try:
                     if node.get("window"):
                         new_pid = pid_of_window(node["window"])
-                        origin = resolve_origin(
-                            new_pid,
-                            pid_workspace_map(
-                                sock_path,
-                                exclude_con_id=con_id))
+                        pid_ws = pid_workspace_map(
+                            sock_path, exclude_con_id=con_id)
+                        origin = family_workspace(new_pid, pid_ws)
+                        if origin is None:
+                            origin = resolve_origin(new_pid, pid_ws)
                 except Exception as e:
                     log("nopid", con_id, e)
                 if origin and origin != new_ws:
