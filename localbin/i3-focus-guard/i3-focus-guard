@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """i3-focus-guard: workspaces stay isolated.
 
-Policy: every newly-mapped window is staged to the scratchpad before it
-can tile the focused workspace, then moved to its origin workspace (or
-back where i3 targeted it) with prior focus restored. Background arrivals
-never shift the visible layout, even briefly. First window on an empty
-workspace stays focused per window-manager design.
+Policy: the manager diverts every birth to holding workspace 20 pre-map;
+the daemon moves each arrival exactly once to its origin workspace (or
+back where i3 targeted it, automation pins to ws10) with prior focus
+restored and an urgency hint, never taking focus. Background arrivals
+never tile the visible layout, even briefly. Births found outside the
+holding pen are staged to the scratchpad as fallback.
 
 Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
@@ -20,6 +21,12 @@ import time
 
 PIDFILE = "/tmp/i3-focus-guard.pid"
 LOG = "/tmp/i3-focus-guard.log"
+HOLD_WS = "20"
+
+
+def is_held_ws(name):
+    """Holding pen or scratchpad: invisible by design, never an origin."""
+    return name == HOLD_WS or (name or "").startswith("__i3")
 
 
 def log(*a):
@@ -117,14 +124,15 @@ def family_workspace(new_pid, pid_to_ws, ppid_fn=None):
 def pid_workspace_map(sock_path, exclude_con_id=None):
     """Map owner pid -> workspace name for visible windows.
 
-    Visible = on a real workspace (not __i3_scratch); named workspaces
+    Visible = on a real workspace (not __i3_scratch, not the holding pen:
+    pen occupants are unsorted arrivals, never origins). Named workspaces
     count too, `move to workspace "<name>"` accepts names.
     """
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     pid_to_ws = {}
     for n, ws in walk(tree):
         if n.get("window") and n.get("id") != exclude_con_id:
-            if ws is not None and not ws["name"].startswith("__i3"):
+            if ws is not None and not is_held_ws(ws["name"]):
                 try:
                     pid_to_ws[pid_of_window(n["window"])] = ws["name"]
                 except Exception:
@@ -292,12 +300,21 @@ def tree_windows(tree):
 
 
 def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
-    """Stage to scratchpad pre-map, then origin move-back + refocus + urgency.
+    """Deliver a birth from the holding pen, then refocus + urgency.
 
-    Staging keeps the window out of the focused workspace tiling entirely,
-    so background arrivals never shift the visible layout even briefly.
+    Rule-held births skip staging (already invisible); births found
+    elsewhere are staged pre-delivery as fallback.
     """
-    if stage and not is_automation_window({"window_properties": ev_props}):
+    try:
+        pre_tree = json.loads(run(sock_path, msgtype="get_tree"))
+    except Exception:
+        pre_tree = None
+    pre_ws = workspace_name(pre_tree, con_id) if pre_tree is not None else None
+    held_on_arrival = is_held_ws(pre_ws)
+    if stage and held_on_arrival:
+        log("pen", con_id)
+    if (stage and not held_on_arrival
+            and not is_automation_window({"window_properties": ev_props})):
         try:
             reply = run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
             log("stage", con_id)
@@ -322,18 +339,25 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         tree_now = None
     staged = (tree_now is not None
               and (workspace_name(tree_now, con_id) or "").startswith("__i3"))
+    held = (staged or (tree_now is not None
+                       and is_held_ws(workspace_name(tree_now, con_id))))
     # Gap births (stage=False) skip staging, so a quiet one never contains
     # focus yet still needs move+refocus+badge below; only the live path
-    # may bail here.
-    if stage and not staged and not contains(node, leaf):
+    # may bail here. Holding-pen births are already invisible, never bailed.
+    if stage and not held and not contains(node, leaf):
         return node
-    # i3 targets the focused workspace; staging hides where it would land
+    # i3 targets the focused workspace; the pen holds where it would land
     new_ws = cur_ws
-    if not staged and tree_now is not None:
+    if not held and tree_now is not None:
         new_ws = workspace_name(tree_now, con_id) or cur_ws
-    if tree_now is not None and ws_empty_except(tree_now, new_ws, con_id):
+    empty_first = (tree_now is not None
+                   and ws_empty_except(tree_now, new_ws, con_id))
+    if empty_first and (not held or stage):
+        # Live births (pen-held live, or pre-rule fallback) keep first-
+        # window focus. Drain-held recoveries (held, stage=False) fall
+        # through to origin sort so restart preserves layout sessions.
         log("firstwin", con_id, "to", new_ws, "leave focused")
-        if staged:
+        if held:
             deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
         ensure_tiled(sock_path, con_id)
     else:
@@ -367,7 +391,7 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
                     shown = deliver_to(sock_path, con_id, origin, cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
                     log("moveback", con_id, "to", origin)
-                elif staged:
+                elif held:
                     shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
                     ensure_tiled(sock_path, con_id)
                     log("unstage", con_id, "to", new_ws)
@@ -429,12 +453,30 @@ def main():
             except Exception as e:
                 log("wsresync", e)
             try:
-                cur = tree_windows(json.loads(run(sock_path, msgtype="get_tree")))
+                resync_tree = json.loads(run(sock_path, msgtype="get_tree"))
             except Exception as e:
                 log("resync", e)
+                resync_tree = None
+            if resync_tree is None:
                 cur = set()
+            else:
+                cur = tree_windows(resync_tree)
             for con_id, _xid in sorted(cur - known):
                 handle_new(sock_path, con_id, cur_ws, history, stage=False)
+            if resync_tree is not None:
+                # Inbox drain: i3 restart re-applies the holding-pen rule to
+                # every window and daemon restarts inherit the backlog; those
+                # carry known ids so the diff above misses them. Fresh births
+                # (unknown ids) are left to their own events.
+                known_ids = set(c for c, _ in known)
+                fresh_ids = set(c for c, _ in cur - known)
+                for n, ws in walk(resync_tree):
+                    if (n.get("window") and ws is not None
+                            and ws.get("name") == HOLD_WS
+                            and n["id"] in known_ids
+                            and n["id"] not in fresh_ids):
+                        handle_new(sock_path, n["id"], cur_ws, history,
+                                   stage=False)
             known = set(cur)
             while True:
                 _typ, ev = read_msg(ev_sock)
