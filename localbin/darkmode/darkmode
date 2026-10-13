@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# darkmode — apply always-dark defaults (i3/Manjaro, no DE settings daemon).
+# Idempotent. Re-run after fresh stow or when apps show light theme.
+set -u
+
+GTK_THEME="Adapta-Nokto-Eta-Maia"
+ICON_THEME="Papirus-Adapta-Nokto-Maia"
+CURSOR_THEME="xcursor-breeze"
+
+fail=0
+need() { command -v "$1" >/dev/null 2>&1 || { echo "missing: $1"; fail=1; }; }
+need gsettings
+[ "$fail" -ne 0 ] && exit 1
+
+gsettings set org.gnome.desktop.interface color-scheme 'prefer-dark'
+gsettings set org.gnome.desktop.interface gtk-theme "$GTK_THEME"
+gsettings set org.gnome.desktop.interface icon-theme "$ICON_THEME"
+gsettings set org.gnome.desktop.interface cursor-theme "$CURSOR_THEME"
+
+echo "--- verify ---"
+gsettings get org.gnome.desktop.interface color-scheme
+gsettings get org.gnome.desktop.interface gtk-theme
+gsettings get org.gnome.desktop.interface icon-theme
+for f in ~/.config/gtk-3.0/settings.ini ~/.config/gtk-4.0/settings.ini; do
+  [ -f "$f" ] && grep -H "prefer-dark-theme\|gtk-theme-name\|gtk-icon" "$f" || echo "missing: $f"
+done
+echo "QT_QPA_PLATFORMTHEME=${QT_QPA_PLATFORMTHEME:-<unset>} QT_STYLE_OVERRIDE=${QT_STYLE_OVERRIDE:-<unset>}"
+echo "darkmode applied (always-dark, no auto-switch)."
