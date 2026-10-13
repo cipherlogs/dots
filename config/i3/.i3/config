@@ -233,6 +233,18 @@ for_window [class="Timeset-gui"] floating enable border normal
 for_window [class="(?i)virtualbox"] floating enable border normal
 for_window [class="Xfburn"] floating enable
 
+# Holding pen: every tiling birth is managed here pre-map so background
+# arrivals never tile the focused workspace, not even for a frame.
+# Floating windows (dialogs, pickers, popups) are exempt: they never tile,
+# so they map straight onto the focused workspace with no sorter delay.
+# i3-focus-guard sorts each arrival to its origin or target workspace. Reload-safe
+# (proven in a scratch session); i3 restart re-applies this to all windows
+# and the guard drains the pen on resubscribe. Automation pins land here
+# too and are rescued to workspace 10 (this rule wins over assign).
+# Reserved: never keep windows on ws20 yourself, the guard sorts anything
+# found there.
+for_window [tiling] move to workspace number 20
+
 # Keep physical-display traffic windows on a reserved background workspace without
 # changing the user's focus. Other urgent windows retain the existing behavior.
 # syntheflow-native-firefox-focus-guard-v1

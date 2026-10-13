@@ -1,15 +1,18 @@
 #!/usr/bin/env python3
 """i3-focus-guard: workspaces stay isolated.
 
-Policy: every newly-mapped window is staged to the scratchpad before it
-can tile the focused workspace, then moved to its origin workspace (or
-back where i3 targeted it) with prior focus restored. Background arrivals
-never shift the visible layout, even briefly. First window on an empty
-workspace stays focused per window-manager design.
+Policy: the manager diverts every tiling birth to holding workspace 20
+pre-map; the daemon moves each arrival exactly once to its origin
+workspace (or back where i3 targeted it, automation pins to ws10).
+Same-workspace arrivals take focus; background arrivals keep prior focus
+restored with an urgency hint, never taking focus. Floating dialogs bypass
+the pen and map directly. Background arrivals never tile the visible
+layout, even briefly. Births found outside the holding pen are staged to
+the scratchpad as fallback.
 
 Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
-shortcut: commands typed by hand in a terminal count as background (click once to focus).
+shortcut: background-parent dialogs land on the focused workspace as-is.
 """
 import json
 import os
@@ -20,6 +23,12 @@ import time
 
 PIDFILE = "/tmp/i3-focus-guard.pid"
 LOG = "/tmp/i3-focus-guard.log"
+HOLD_WS = "20"
+
+
+def is_held_ws(name):
+    """Holding pen or scratchpad: invisible by design, never an origin."""
+    return name == HOLD_WS or (name or "").startswith("__i3")
 
 
 def log(*a):
@@ -71,6 +80,23 @@ def ppid_of(pid):
     return int(stat.rsplit(")", 1)[1].split()[1])  # field 4
 
 
+def lineage(new_pid, ppid_fn=None):
+    """Self plus OS ancestors, nearest first (pure)."""
+    getppid = ppid_fn or ppid_of
+    chain, seen, pid, depth = [new_pid], {new_pid}, new_pid, 0
+    while depth < 32:
+        try:
+            pid = getppid(pid)
+        except Exception:
+            break
+        if pid in (0, 1) or pid in seen:
+            break
+        seen.add(pid)
+        chain.append(pid)
+        depth += 1
+    return chain
+
+
 def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
     """Nearest ancestor workspace of new_pid, or None.
 
@@ -78,33 +104,37 @@ def resolve_origin(new_pid, pid_to_ws, ppid_fn=None):
     pid owning a visible window wins. Self pid is never consulted, so a
     single-process browser reusing its pid yields no origin (urgency-only).
     """
-    getppid = ppid_fn or ppid_of
-    seen, pid, depth = {new_pid}, new_pid, 0
-    while depth < 32:
-        try:
-            pid = getppid(pid)
-        except Exception:
-            return None
-        if pid in (0, 1) or pid in seen:
-            return None
-        seen.add(pid)
+    for pid in lineage(new_pid, ppid_fn)[1:]:
         if pid in pid_to_ws:
             return pid_to_ws[pid]
-        depth += 1
     return None
+
+
+def family_workspace(new_pid, pid_to_ws, ppid_fn=None):
+    """Workspace owned unanimously by new_pid's process family, or None.
+
+    Family is new_pid plus OS ancestors; self is included so a
+    pid-reusing single-process dialog matches its own browser windows.
+    Exactly one distinct workspace wins without consulting ancestry;
+    split or windowless families return None (caller falls back).
+    """
+    seen = set(lineage(new_pid, ppid_fn))
+    found = set(ws for q, ws in pid_to_ws.items() if q in seen)
+    return found.pop() if len(found) == 1 else None
 
 
 def pid_workspace_map(sock_path, exclude_con_id=None):
     """Map owner pid -> workspace name for visible windows.
 
-    Visible = on a real workspace (not __i3_scratch); named workspaces
+    Visible = on a real workspace (not __i3_scratch, not the holding pen:
+    pen occupants are unsorted arrivals, never origins). Named workspaces
     count too, `move to workspace "<name>"` accepts names.
     """
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     pid_to_ws = {}
     for n, ws in walk(tree):
         if n.get("window") and n.get("id") != exclude_con_id:
-            if ws is not None and not ws["name"].startswith("__i3"):
+            if ws is not None and not is_held_ws(ws["name"]):
                 try:
                     pid_to_ws[pid_of_window(n["window"])] = ws["name"]
                 except Exception:
@@ -192,6 +222,30 @@ def set_urgent(xid):
         log("urgent-err", xid, e)
 
 
+def ensure_tiled(sock_path, con_id):
+    """Floating off so delivered arrivals tile; scratchpad float never leaks."""
+    run(sock_path, '[con_id=%s] floating disable' % con_id)
+
+
+def deliver_to(sock_path, con_id, target_ws, cur_ws, staged):
+    """Move a birth to its delivery workspace. Returns True when the
+    window was shown from the scratchpad (focus stolen, caller refocuses).
+
+    i3 misroutes `move to workspace` when the target is the visible
+    workspace (lands elsewhere, still replies success), so staged windows
+    bound for the focused workspace are shown from the scratchpad instead.
+    """
+    if target_ws == cur_ws:
+        if not staged:
+            run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
+            log("restage", con_id)
+        run(sock_path, '[con_id=%s] scratchpad show' % con_id)
+        return True
+    run(sock_path, '[con_id=%s] move to workspace "%s"'
+        % (con_id, target_ws))
+    return False
+
+
 def focused_leaf_id(sock_path):
     tree = json.loads(run(sock_path, msgtype="get_tree"))
     found = [n["id"] for n, _ in walk(tree) if n.get("focused")]
@@ -248,17 +302,32 @@ def tree_windows(tree):
 
 
 def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
-    """Stage to scratchpad pre-map, then origin move-back + refocus + urgency.
+    """Deliver a birth from the holding pen, then refocus + urgency.
 
-    Staging keeps the window out of the focused workspace tiling entirely,
-    so background arrivals never shift the visible layout even briefly.
+    Rule-held births skip staging (already invisible); births found
+    elsewhere are staged pre-delivery as fallback.
     """
-    if stage and not is_automation_window({"window_properties": ev_props}):
+    try:
+        pre_tree = json.loads(run(sock_path, msgtype="get_tree"))
+    except Exception:
+        pre_tree = None
+    pre_ws = workspace_name(pre_tree, con_id) if pre_tree is not None else None
+    held_on_arrival = is_held_ws(pre_ws)
+    if stage and held_on_arrival:
+        log("pen", con_id)
+    if (stage and not held_on_arrival
+            and not is_automation_window({"window_properties": ev_props})):
         try:
-            run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
+            reply = run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
             log("stage", con_id)
+            try:
+                ok = json.loads(reply)[0].get("success", False)
+            except Exception:
+                ok = False
+            log("hide-reply", con_id, "success" if ok else "failed")
         except Exception as e:
             log("stage-err", con_id, e)
+            log("hide-reply", con_id, "error")
     time.sleep(0.4)
     node = find_node(sock_path, con_id)
     leaf = focused_leaf_id(sock_path)
@@ -272,60 +341,94 @@ def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
         tree_now = None
     staged = (tree_now is not None
               and (workspace_name(tree_now, con_id) or "").startswith("__i3"))
-    if not staged and not contains(node, leaf):
+    held = (staged or (tree_now is not None
+                       and is_held_ws(workspace_name(tree_now, con_id))))
+    # Gap births (stage=False) skip staging, so a quiet one never contains
+    # focus yet still needs move+refocus+badge below; only the live path
+    # may bail here. Holding-pen births are already invisible, never bailed.
+    if stage and not held and not contains(node, leaf):
         return node
-    # i3 targets the focused workspace; staging hides where it would land
+    # i3 targets the focused workspace; the pen holds where it would land
     new_ws = cur_ws
-    if not staged and tree_now is not None:
+    if not held and tree_now is not None:
         new_ws = workspace_name(tree_now, con_id) or cur_ws
-    if tree_now is not None and ws_empty_except(tree_now, new_ws, con_id):
-        log("firstwin", con_id, "leave focused")
-        if staged:
-            run(sock_path, '[con_id=%s] move to workspace "%s"'
-                % (con_id, new_ws))
+    empty_first = (tree_now is not None
+                   and ws_empty_except(tree_now, new_ws, con_id))
+    if empty_first and (not held or stage):
+        # Live births (pen-held live, or pre-rule fallback) keep first-
+        # window focus. Drain-held recoveries (held, stage=False) fall
+        # through to origin sort so restart preserves layout sessions.
+        log("firstwin", con_id, "to", new_ws, "leave focused")
+        if held:
+            deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
+        ensure_tiled(sock_path, con_id)
     else:
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
                                  lambda i: find_node(sock_path, i)))
+        shown = False
+        final_ws = new_ws
         try:
             if is_automation_window(node):
-                if staged:
-                    run(sock_path, '[con_id=%s] move to workspace "10"'
-                        % con_id)
-                    log("autom-rescue", con_id)
-                else:
+                autom_ws = (workspace_name(tree_now, con_id)
+                            if tree_now is not None else None)
+                if not staged and autom_ws == "10":
                     log("autom-skip", con_id)
+                else:
+                    shown = deliver_to(sock_path, con_id, "10", cur_ws, staged)
+                    ensure_tiled(sock_path, con_id)
+                    final_ws = "10"
+                    log("autom-rescue", con_id)
             else:
                 origin = None
                 try:
                     if node.get("window"):
                         new_pid = pid_of_window(node["window"])
-                        origin = resolve_origin(
-                            new_pid,
-                            pid_workspace_map(
-                                sock_path,
-                                exclude_con_id=con_id))
+                        pid_ws = pid_workspace_map(
+                            sock_path, exclude_con_id=con_id)
+                        origin = family_workspace(new_pid, pid_ws)
+                        if origin is None:
+                            origin = resolve_origin(new_pid, pid_ws)
                 except Exception as e:
                     log("nopid", con_id, e)
                 if origin and origin != new_ws:
-                    run(sock_path, '[con_id=%s] move to workspace "%s"'
-                        % (con_id, origin))
+                    shown = deliver_to(sock_path, con_id, origin, cur_ws, staged)
+                    ensure_tiled(sock_path, con_id)
+                    final_ws = origin
                     log("moveback", con_id, "to", origin)
-                elif staged:
-                    run(sock_path, '[con_id=%s] move to workspace "%s"'
-                        % (con_id, new_ws))
+                elif held:
+                    shown = deliver_to(sock_path, con_id, new_ws, cur_ws, staged)
+                    ensure_tiled(sock_path, con_id)
                     log("unstage", con_id, "to", new_ws)
                 else:
-                    log("fallback", con_id, "urgency-only")
-            if (victim is not None and victim != leaf
-                    and find_node(sock_path, victim) is not None):
-                run(sock_path, '[con_id=%s] focus' % victim)
-                log("refocus", leaf, "->", victim)
-            if node.get("window"):
-                # last: the hint sticks only once the
-                # window is unfocused (set while focused
-                # is cleared)
-                set_urgent(node["window"])
+                    ensure_tiled(sock_path, con_id)
+                    log("fallback", con_id, "urgency-only on", new_ws)
+            # Fresh focus: the user may have switched workspaces during the
+            # settle delay, so autofocus compares against now, not birth time.
+            try:
+                _ws = json.loads(run(sock_path, msgtype="get_workspaces"))
+                cur_now = next(w["name"] for w in _ws if w["focused"])
+            except Exception:
+                cur_now = cur_ws
+            if (final_ws == cur_now and not is_automation_window(node)
+                    and node.get("window")):
+                run(sock_path, '[con_id=%s] focus' % con_id)
+                log("autofocus", con_id, "on", final_ws)
+            else:
+                # Gap births can sit off the focused workspace; focusing there
+                # would switch desktops, so refocus stays on the focused one.
+                # Scratchpad-show deliveries steal focus even when the victim is
+                # the pre-birth leaf, so those always refocus.
+                if (victim is not None and (shown or victim != leaf)
+                        and new_ws == cur_now
+                        and find_node(sock_path, victim) is not None):
+                    run(sock_path, '[con_id=%s] focus' % victim)
+                    log("refocus", leaf, "->", victim)
+                if node.get("window"):
+                    # last: the hint sticks only once the
+                    # window is unfocused (set while focused
+                    # is cleared)
+                    set_urgent(node["window"])
         except Exception as e:
             log("err", e)
     return node
@@ -367,12 +470,30 @@ def main():
             except Exception as e:
                 log("wsresync", e)
             try:
-                cur = tree_windows(json.loads(run(sock_path, msgtype="get_tree")))
+                resync_tree = json.loads(run(sock_path, msgtype="get_tree"))
             except Exception as e:
                 log("resync", e)
+                resync_tree = None
+            if resync_tree is None:
                 cur = set()
+            else:
+                cur = tree_windows(resync_tree)
             for con_id, _xid in sorted(cur - known):
                 handle_new(sock_path, con_id, cur_ws, history, stage=False)
+            if resync_tree is not None:
+                # Inbox drain: i3 restart re-applies the holding-pen rule to
+                # every window and daemon restarts inherit the backlog; those
+                # carry known ids so the diff above misses them. Fresh births
+                # (unknown ids) are left to their own events.
+                known_ids = set(c for c, _ in known)
+                fresh_ids = set(c for c, _ in cur - known)
+                for n, ws in walk(resync_tree):
+                    if (n.get("window") and ws is not None
+                            and ws.get("name") == HOLD_WS
+                            and n["id"] in known_ids
+                            and n["id"] not in fresh_ids):
+                        handle_new(sock_path, n["id"], cur_ws, history,
+                                   stage=False)
             known = set(cur)
             while True:
                 _typ, ev = read_msg(ev_sock)
