@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """i3-focus-guard: workspaces stay isolated.
 
-Policy: every newly-mapped window gets origin handling. If its process
-ancestry reaches a visible window it is moved back to that ancestor
-workspace (origin); otherwise leave placement, urgency-hint only. The
-newcomer's focus is always taken back (prior focus restored), so even a
-self-launched window on the current workspace needs one explicit click.
-First window on an empty workspace stays focused per window-manager design.
+Policy: every newly-mapped window is staged to the scratchpad before it
+can tile the focused workspace, then moved to its origin workspace (or
+back where i3 targeted it) with prior focus restored. Background arrivals
+never shift the visible layout, even briefly. First window on an empty
+workspace stays focused per window-manager design.
 
 Runtime deps: i3-msg, xprop, xdotool (urgency hint).
 
@@ -14,6 +13,8 @@ shortcut: commands typed by hand in a terminal count as background (click once t
 """
 import json
 import os
+import socket
+import struct
 import subprocess
 import time
 
@@ -170,19 +171,11 @@ def find_node(sock_path, con_id):
     return next((n for n, _ in walk(tree) if n.get("id") == con_id), None)
 
 
-def is_first_window_on_ws(tree, con_id):
-    """True if con_id is the only window leaf on its workspace (pure).
-
-    First windows stay focused per window-manager design; caller skips
-    move, refocus, and urgency entirely in that case.
-    """
-    ws_node = next(
-        (ws for n, ws in walk(tree) if n.get("id") == con_id and ws is not None),
-        None)
-    if ws_node is None:
-        return False
+def ws_empty_except(tree, ws_name, con_id):
+    """True if ws_name holds no window leaf besides con_id (pure)."""
     return not any(n.get("window") and n.get("id") != con_id
-                   for n, _ in walk(ws_node))
+                   for n, ws in walk(tree)
+                   if ws is not None and ws.get("name") == ws_name)
 
 
 def set_urgent(xid):
@@ -214,37 +207,94 @@ def pid_of_window(xid):
     return int(out.split("=", 1)[1].strip())
 
 
+def open_events(sock_path):
+    """Persistent IPC event socket; i3-msg subscribe exits after window::new
+    (rc 0), so the guard holds its own socket instead (stdlib only)."""
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.connect(sock_path)
+    payload = b'["window","workspace"]'
+    s.sendall(b"i3-ipc" + struct.pack("II", len(payload), 2) + payload)
+    typ, ack = read_msg(s)
+    if not (ack or {}).get("success"):
+        s.close()
+        raise RuntimeError("subscribe rejected: %r" % (ack,))
+    return s
+
+
+def read_msg(s):
+    """One IPC reply; (None, None) on clean EOF. Raises on protocol errors."""
+    hdr = b""
+    while len(hdr) < 14:
+        chunk = s.recv(14 - len(hdr))
+        if not chunk:
+            return None, None
+        hdr += chunk
+    if hdr[:6] != b"i3-ipc":
+        raise RuntimeError("bad ipc magic")
+    ln = struct.unpack("I", hdr[6:10])[0]
+    buf = b""
+    while len(buf) < ln:
+        chunk = s.recv(ln - len(buf))
+        if not chunk:
+            raise RuntimeError("truncated ipc payload")
+        buf += chunk
+    return struct.unpack("I", hdr[10:14])[0], json.loads(buf)
+
+
 def tree_windows(tree):
     """(con_id, xid) pairs for window-bearing cons (pure)."""
     return set((n["id"], n.get("window"))
                for n, _ in walk(tree) if n.get("window"))
 
 
-def handle_new(sock_path, con_id, cur_ws, history):
-    """Origin move-back + refocus + urgency for one new window."""
+def handle_new(sock_path, con_id, cur_ws, history, stage=True, ev_props=None):
+    """Stage to scratchpad pre-map, then origin move-back + refocus + urgency.
+
+    Staging keeps the window out of the focused workspace tiling entirely,
+    so background arrivals never shift the visible layout even briefly.
+    """
+    if stage and not is_automation_window({"window_properties": ev_props}):
+        try:
+            run(sock_path, '[con_id=%s] move to scratchpad' % con_id)
+            log("stage", con_id)
+        except Exception as e:
+            log("stage-err", con_id, e)
     time.sleep(0.4)
     node = find_node(sock_path, con_id)
     leaf = focused_leaf_id(sock_path)
     log("new", con_id, "leaf=", leaf,
         "mapped=", node is not None and node.get("window"))
-    if node is None or leaf is None or not contains(node, leaf):
+    if node is None or leaf is None:
         return node
     try:
         tree_now = json.loads(run(sock_path, msgtype="get_tree"))
     except Exception:
         tree_now = None
-    if tree_now is not None and is_first_window_on_ws(
-            tree_now, con_id):
+    staged = (tree_now is not None
+              and (workspace_name(tree_now, con_id) or "").startswith("__i3"))
+    if not staged and not contains(node, leaf):
+        return node
+    # i3 targets the focused workspace; staging hides where it would land
+    new_ws = cur_ws
+    if not staged and tree_now is not None:
+        new_ws = workspace_name(tree_now, con_id) or cur_ws
+    if tree_now is not None and ws_empty_except(tree_now, new_ws, con_id):
         log("firstwin", con_id, "leave focused")
+        if staged:
+            run(sock_path, '[con_id=%s] move to workspace "%s"'
+                % (con_id, new_ws))
     else:
-        new_ws = (workspace_name(tree_now, con_id)
-                  if tree_now is not None else None) or cur_ws
         victim = (stack_victim(sock_path, con_id, new_ws)
                   or live_victim(history, con_id,
                                  lambda i: find_node(sock_path, i)))
         try:
             if is_automation_window(node):
-                log("autom-skip", con_id)
+                if staged:
+                    run(sock_path, '[con_id=%s] move to workspace "10"'
+                        % con_id)
+                    log("autom-rescue", con_id)
+                else:
+                    log("autom-skip", con_id)
             else:
                 origin = None
                 try:
@@ -261,6 +311,10 @@ def handle_new(sock_path, con_id, cur_ws, history):
                     run(sock_path, '[con_id=%s] move to workspace "%s"'
                         % (con_id, origin))
                     log("moveback", con_id, "to", origin)
+                elif staged:
+                    run(sock_path, '[con_id=%s] move to workspace "%s"'
+                        % (con_id, new_ws))
+                    log("unstage", con_id, "to", new_ws)
                 else:
                     log("fallback", con_id, "urgency-only")
             if (victim is not None and victim != leaf
@@ -304,14 +358,10 @@ def main():
     log("ready, ws=%s" % cur_ws)
     while True:
         try:
-            p = subprocess.Popen(
-                ["i3-msg", "-s", sock_path, "-t", "subscribe",
-                 '["window","workspace"]'],
-                stdout=subprocess.PIPE, text=True, bufsize=1)
-            try:  # subscribe streams die silently (i3-msg exits
-                # after window::new); resync so origin resolution
-                # never acts on a stale focused workspace, then
-                # reconcile windows mapped while unsubscribed
+            ev_sock = open_events(sock_path)
+            try:  # resync so origin resolution never acts on a stale
+                # focused workspace, then reconcile windows mapped
+                # while unsubscribed
                 ws = json.loads(run(sock_path, msgtype="get_workspaces"))
                 cur_ws = next(w["name"] for w in ws if w["focused"])
             except Exception as e:
@@ -322,13 +372,12 @@ def main():
                 log("resync", e)
                 cur = set()
             for con_id, _xid in sorted(cur - known):
-                handle_new(sock_path, con_id, cur_ws, history)
+                handle_new(sock_path, con_id, cur_ws, history, stage=False)
             known = set(cur)
-            for line in p.stdout:
-                try:
-                    ev = json.loads(line)
-                except ValueError:
-                    continue
+            while True:
+                _typ, ev = read_msg(ev_sock)
+                if ev is None:
+                    break  # clean EOF; resubscribe below
                 if "current" in ev:
                     if ev.get("change") == "focus":
                         cur_ws = ev["current"]["name"]
@@ -339,10 +388,14 @@ def main():
                             history.append(c["id"])
                             del history[:-20]
                     elif ev.get("change") == "new":
-                        node = handle_new(sock_path, c["id"], cur_ws, history)
+                        node = handle_new(sock_path, c["id"], cur_ws, history,
+                                            ev_props=c.get("window_properties"))
                         known.add((c["id"], node.get("window") if node else None))
-            p.wait()
-            log("resub")  # subscribe stream ended; reconnecting
+            try:
+                ev_sock.close()
+            except Exception:
+                pass
+            log("resub")  # event stream ended; reconnecting
         except Exception as e:
             log("reconnect", e)
         time.sleep(1)
