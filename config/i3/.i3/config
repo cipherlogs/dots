@@ -151,6 +151,16 @@ bindsym $mod+Shift+minus move scratchpad
 # If there are multiple scratchpad windows, this command cycles through them.
 bindsym $mod+minus scratchpad show
 
+# Scratchpad/floating visibility: center every floating window when managed
+# (scratchpad windows are always floating when shown). Border/titlebar
+# already comes from default_floating_border above.
+for_window [floating] move position center
+
+# Thick frame for floating Alacritty only (color stays theme blue: i3 has no
+# per-window border color). Second line restores pixel 0 if tiled again.
+for_window [class="Alacritty" floating] border pixel 4
+for_window [class="Alacritty" tiling] border pixel 0
+
 #navigate workspaces next / previous
 bindsym $mod+Tab workspace back_and_forth
 # bindsym $mod+Tab workspace prev
