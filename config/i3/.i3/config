@@ -439,7 +439,7 @@ bindsym $mod+m bar mode toggle
 
 # Theme colors — tokyodark (matches nvim tokyodark + Normal bg #06080A)
 # class                   border  backgr. text    indic.   child_border
-  client.focused          #7199EE #11121D #A0A8CD #98C379
+  client.focused          #7AA2F7 #11121D #A0A8CD #98C379
   client.focused_inactive #212234 #212234 #4A5057 #353945
   client.unfocused        #212234 #212234 #4A5057 #353945
   client.urgent           #EE6D85 #EE6D85 #06080A #D7A65F
