@@ -31,6 +31,10 @@ return {
 
   highlight = {
     enable = true,
+    -- shortcut: no treesitter highlight for markdown; master's markdown
+    -- queries use offset directives the 0.12 runtime rejects (range nil
+    -- crash). Upgrade: migrate nvim-treesitter to the main branch.
+    disable = { "markdown", "markdown_inline" },
     use_languagetree = false,
   },
 
